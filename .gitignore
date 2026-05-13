@@ -1,0 +1,48 @@
+# ─── Model weights — always on QNAP ───────────────────────
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+models/
+weights/
+
+# ─── Vector store and databases ───────────────────────────
+qdrant_storage/
+*.db
+*.sqlite
+*.sqlite3
+chroma/
+vectorstore/
+
+# ─── Secrets and credentials ──────────────────────────────
+.env
+.env.*
+*.key
+secrets/
+config/credentials*
+
+# ─── Logs and runtime artifacts ───────────────────────────
+logs/
+*.log
+*.pid
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+node_modules/
+
+# ─── Raw feed archives — on QNAP ──────────────────────────
+pipeline/feeds/archive/
+raw-feeds/
+
+# ─── Hermes runtime state (not config) ────────────────────
+hermes/memory/*.db
+hermes/memory/chroma/
+
+# ─── Symlinks to QNAP (tracked separately) ────────────────
+models
+vectorstore
+timeseries
+pipeline/feeds/archive
