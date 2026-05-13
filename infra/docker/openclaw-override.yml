@@ -1,0 +1,5 @@
+services:
+  openclaw-gateway:
+    user: "1001:1001"
+  openclaw-cli:
+    user: "1001:1001"
