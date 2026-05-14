@@ -120,6 +120,32 @@ def save_raw(article: dict, source: str) -> None:
 
 # ─── Core ─────────────────────────────────────────────────────────────────────
 
+# ─── Noise filter ─────────────────────────────────────────────────────────────
+
+NOISE_PATTERNS = [
+    # Personal finance lifestyle content
+    "i'm in my", "i am in my", "i'm 7", "i am 7",
+    "my husband", "my wife and i", "my mortgage",
+    "retire on dividends", "social security at",
+    "pto gap", "envy", "extravagant spender",
+    "roast my house", "restaurant failed",
+    "live below my means", "enjoy working",
+    # Fund commentary without market signals
+    "q1 2026 commentary", "q2 2026 commentary",
+    "q3 2026 commentary", "q4 2026 commentary",
+    "quarterly scorecard", "quarterly commentary",
+    "portfolio movers",
+    # Annual meeting notices
+    "schedules annual meeting",
+    "annual general meeting",
+]
+
+def is_noise(title: str) -> bool:
+    """Filter out personal finance and non-market content"""
+    title_lower = title.lower()
+    return any(pattern in title_lower for pattern in NOISE_PATTERNS)
+
+
 def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
     name = feed["name"]
     url  = feed["url"]
@@ -141,6 +167,8 @@ def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
             summary   = getattr(entry, "summary", "").strip()
 
             if not title:
+                continue
+            if is_noise(title):
                 continue
             if is_too_old(pub_dt, MAX_AGE_HOURS):
                 continue
