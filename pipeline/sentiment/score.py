@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tickers.extract import extract_tickers, init_ticker_db, seed_common_tickers
+from tickers.taxonomy import normalize_sectors
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
@@ -220,7 +221,7 @@ def process_queue(queue_file: Path) -> Path | None:
             "sentiment":  score["sentiment"],
             "confidence": float(score["confidence"]),
             "tickers":    enhanced_tickers,
-            "sectors":    score.get("sectors", []),
+            "sectors":    normalize_sectors(score.get("sectors", [])),
             "event_type": score.get("event_type", "other"),
             "summary":    score.get("summary", ""),
         }

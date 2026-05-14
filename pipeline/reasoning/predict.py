@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from tickers.taxonomy import sectors_for_query, normalize_sectors
 
 SPARK_OLLAMA  = os.getenv("SPARK_OLLAMA_HOST", "http://172.29.11.225:11434")
 OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
@@ -89,8 +90,9 @@ def embed_query(query: str) -> list[float]:
 
 def query_qdrant(query: str, limit: int = 15,
                  sentiment_filter: str = None,
-                 hours_back: int = 48) -> list[dict]:
-    """Semantic search against Qdrant signal store"""
+                 hours_back: int = 48,
+                 sector_hint: list[str] = None) -> list[dict]:
+    """Semantic search against Qdrant signal store with taxonomy expansion"""
     from qdrant_client import QdrantClient
     from qdrant_client.models import Filter, FieldCondition, MatchValue
 
@@ -154,7 +156,9 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
         if s.get("tickers"):
             lines.append(f"  TICKERS: {', '.join(s['tickers'])}")
         if s.get("sectors"):
-            lines.append(f"  SECTORS: {', '.join(s['sectors'])}")
+            from tickers.taxonomy import normalize_sectors
+            norm_sectors = normalize_sectors(s["sectors"])
+            lines.append(f"  SECTORS: {', '.join(norm_sectors)}")
         if s.get("summary"):
             lines.append(f"  SUMMARY: {s['summary'][:150]}")
         lines.append("")
