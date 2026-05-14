@@ -55,7 +55,7 @@ Required fields:
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
 - summary: max 2 sentence plain English summary of market impact
 
-{{rules_text}}
+{rules_text}
 
 Example output:
 {{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}}
