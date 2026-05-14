@@ -121,7 +121,8 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
         "model":  OLLAMA_MODEL,
         "stream": False,
         "think":  False,
-        "options": {"temperature": 0.1, "num_predict": 512, "num_ctx": 4096},
+        "format": "json",
+        "options": {"temperature": 0.1, "num_predict": 768, "num_ctx": 4096},
         "messages": [
             {"role": "system",  "content": get_system_prompt()},
             {"role": "user",    "content": build_prompt(article)},

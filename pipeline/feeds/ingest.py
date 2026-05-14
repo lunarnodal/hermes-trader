@@ -148,8 +148,17 @@ NOISE_PATTERNS = [
     "cost of living concerns",
     "business daily",
     "st helier",
-    # Form 13F filings — low signal value
+    # SEC filings — low signal value
     "form 13f",
+    "form 13g",
+    "form 144",
+    "form 10q",
+    "form 10k",
+    "form 8-k",
+    "form 4 ",
+    "for: 14 may",
+    "for: 15 may",
+    "for: 16 may",
     # Misc lifestyle/human interest
     "burger stall",
     "joys of his own",
