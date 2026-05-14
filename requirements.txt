@@ -1,0 +1,12 @@
+feedparser
+requests
+qdrant-client
+sentence-transformers
+torch
+transformers
+peft
+pandas
+schedule
+python-dotenv
+tqdm
+python-dateutil
