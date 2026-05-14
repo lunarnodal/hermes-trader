@@ -48,3 +48,4 @@ timeseries
 pipeline/feeds/archive
 pipeline/.env
 pipeline/.venv/
+data/

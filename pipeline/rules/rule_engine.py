@@ -6,12 +6,13 @@ and stored in SQLite alongside static baseline rules
 """
 
 import sqlite3
+import os
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path("/mnt/qnap/timeseries/rules.db")
+DB_PATH = Path(os.environ.get("RULES_DB_PATH", "/home/trading/trading-ai/data/rules.db"))
 log = logging.getLogger(__name__)
 
 
@@ -159,6 +160,7 @@ def propose_rule(conn: sqlite3.Connection, trigger: str,
         count = 1
         log.info(f"New rule proposal: '{trigger}'")
 
+    conn.commit()
     # Auto-promote to active rule after threshold
     if count >= 5:
         promote_proposal(conn, trigger)

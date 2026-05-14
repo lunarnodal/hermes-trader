@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
 Rule discovery agent
-Analyzes recent signals for emerging co-occurrence patterns
-Proposes new inference rules when patterns exceed threshold
-Runs daily via cron
+Uses DeepSeek-R1-70B on Spark to analyze recent signals
+and propose new inference rules.
+Runs daily via cron.
 """
 
 import json
 import logging
 import os
 import requests
-from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
-SIGNALS_DIR   = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
-LOOKBACK_DAYS = 7
+SPARK_OLLAMA_HOST = os.getenv("SPARK_OLLAMA_HOST", "http://172.29.11.225:11434")
+DISCOVERY_MODEL   = "deepseek-r1:70b"
+SIGNALS_DIR       = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
+LOOKBACK_DAYS     = 7
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,131 +31,110 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Import rule engine
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from rule_engine import init_db, propose_rule, get_active_rules
 
+DISCOVERY_PROMPT = """You are a financial market analyst identifying sector inference rules.
 
-DISCOVERY_PROMPT = """You are a financial news pattern analyst.
-Given a list of recent news signal summaries, identify any EMERGING THEMES
-that suggest new sector inference rules should be added.
+Given recent financial news signals, identify NEW cross-sector patterns not already covered.
 
-Look for:
-- New policy changes (tariffs, regulations, sanctions) with sector impacts
-- Emerging technologies affecting multiple sectors
-- New geopolitical developments with supply chain implications
-- Recurring economic patterns linking topics to sectors
+EXISTING RULES ALREADY COVER: war/conflict, russia/ukraine, iran/opec, china/exports,
+taiwan/tsmc, fed/rates, dollar, tariffs, ai/datacenter, memory/chips, specialty-gases,
+power-grid, supply-chain, cybersecurity, weather, food/crops
 
-For each discovered pattern, output a JSON array of rule proposals:
-[
-  {
-    "trigger": "short phrase describing the trigger (3-6 words)",
-    "sectors": ["sector1", "sector2"],
-    "evidence": "1 sentence explaining why this rule makes sense",
-    "confidence": 0.0-1.0
-  }
-]
+OUTPUT: A JSON array of new rule proposals. ONLY the JSON array, nothing else.
+Format: [{"trigger":"3-6 word phrase","sectors":["s1","s2"],"evidence":"one sentence","confidence":0.0-1.0}]
+If no new patterns: []
 
-Only propose rules that are NEW and not already obvious.
-Only output the JSON array, nothing else.
-If no new patterns found, output: []"""
+Focus on SPECIFIC emerging themes like:
+- New political figures/policies affecting specific sectors
+- New technology trends creating cross-sector dependencies  
+- Specific company actions with broader sector implications
+- Geographic/regional developments affecting supply chains"""
 
 
 def load_recent_signals(days: int = 7) -> list[dict]:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     signals = []
-    for f in sorted(SIGNALS_DIR.glob("scored_*.jsonl"), reverse=True)[:50]:
+    for f in sorted(SIGNALS_DIR.glob("scored_*.jsonl"), reverse=True)[:20]:
         with open(f) as fh:
             for line in fh:
                 line = line.strip()
                 if line:
                     try:
-                        signals.append(json.loads(line))
+                        s = json.loads(line)
+                        if isinstance(s, dict):
+                            signals.append(s)
                     except:
                         continue
     return signals
 
 
-def find_cooccurrences(signals: list[dict]) -> dict:
-    """Find topics and sectors that appear together frequently"""
-    cooccur = defaultdict(Counter)
-
-    for s in signals:
-        sectors = s.get("sectors", [])
-        title_words = s.get("title", "").lower().split()
-        summary = s.get("summary", "").lower()
-
-        # Look for keyword-sector co-occurrences
-        keywords = []
-        for word in title_words:
-            if len(word) > 4:  # Skip short words
-                keywords.append(word)
-
-        for kw in keywords:
-            for sector in sectors:
-                cooccur[kw][sector] += 1
-
-    # Return pairs that co-occur 3+ times
-    strong = {}
-    for kw, sector_counts in cooccur.items():
-        if sum(sector_counts.values()) >= 3:
-            strong[kw] = dict(sector_counts.most_common(5))
-
-    return strong
-
-
 def discover_rules_via_llm(signals: list[dict],
                             existing_rules: list[dict]) -> list[dict]:
-    """Use LLM to identify emerging patterns from recent signals"""
+    # Build concise signal context — titles only to avoid summary noise
+    signal_lines = []
+    for s in signals[-15:]:
+        if not isinstance(s, dict):
+            continue
+        tickers = s.get("tickers", [])
+        sectors = s.get("sectors", [])
+        title   = s.get("title", "")[:80]
+        sent    = s.get("sentiment", "")
+        signal_lines.append(
+            f"- [{sent}] {title} | sectors:{sectors} tickers:{tickers}"
+        )
 
-    # Build context from recent signals
-    signal_summaries = []
-    for s in signals[-50:]:  # Last 50 signals
-        if s.get("summary"):
-            signal_summaries.append(
-                f"- [{s['sentiment']}] {s['title'][:60]} | "
-                f"sectors: {s.get('sectors',[])} | {s['summary'][:80]}"
-            )
+    context  = "\n".join(signal_lines)
+    user_msg = f"Recent signals:\n{context}\n\nPropose NEW rules only. Output JSON array."
 
-    existing_triggers = [r["trigger"] for r in existing_rules]
-    context = "\n".join(signal_summaries)
-
-    user_msg = f"""Existing rules already cover: {existing_triggers[:10]}
-
-Recent signals from the last {LOOKBACK_DAYS} days:
-{context}
-
-Identify any NEW emerging patterns not covered by existing rules."""
+    log.info(f"Sending {len(signal_lines)} signals to DeepSeek for rule discovery")
 
     try:
         resp = requests.post(
-            f"{OLLAMA_HOST}/api/chat",
+            f"{SPARK_OLLAMA_HOST}/api/chat",
             json={
-                "model": "qwen3:30b",
+                "model": DISCOVERY_MODEL,
                 "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 2048},
+                "options": {"temperature": 0.1, "num_predict": 4096},
                 "messages": [
                     {"role": "system", "content": DISCOVERY_PROMPT},
                     {"role": "user",   "content": user_msg}
                 ]
             },
-            timeout=300
+            timeout=600
         )
         resp.raise_for_status()
-        content = resp.json()["message"]["content"].strip()
+        raw     = resp.json()
+        content = raw["message"]["content"].strip()
+        thinking = raw["message"].get("thinking", "")
 
+        log.info(f"Response: {len(content)} content chars, {len(thinking)} thinking chars")
+
+        # Strip think tags if present
         if "<think>" in content:
             content = content[content.rfind("</think>") + 8:].strip()
+
+        # Strip markdown fences
         if content.startswith("```"):
             content = content.split("```")[1]
             if content.startswith("json"):
                 content = content[4:]
             content = content.strip()
 
+        # Find JSON array in content
+        start = content.find("[")
+        end   = content.rfind("]") + 1
+        if start != -1 and end > start:
+            content = content[start:end]
+
+        if not content:
+            log.warning("Empty response from DeepSeek")
+            return []
+
         proposals = json.loads(content)
-        log.info(f"LLM proposed {len(proposals)} new rules")
-        return proposals
+        log.info(f"DeepSeek proposed {len(proposals)} new rules")
+        return proposals if isinstance(proposals, list) else []
 
     except Exception as e:
         log.error(f"LLM discovery failed: {e}")
@@ -164,32 +143,26 @@ Identify any NEW emerging patterns not covered by existing rules."""
 
 def run_discovery() -> None:
     log.info("─── Rule discovery starting ───")
+    Path("/mnt/qnap/timeseries/logs").mkdir(parents=True, exist_ok=True)
 
-    conn = init_db()
+    conn           = init_db()
     existing_rules = get_active_rules(conn)
-    signals = load_recent_signals(LOOKBACK_DAYS)
+    signals        = load_recent_signals(LOOKBACK_DAYS)
 
     log.info(f"Loaded {len(signals)} signals from last {LOOKBACK_DAYS} days")
     log.info(f"Existing rules: {len(existing_rules)}")
 
-    # Statistical co-occurrence analysis
-    cooccur = find_cooccurrences(signals)
-    log.info(f"Found {len(cooccur)} keyword co-occurrences")
-
-    # LLM-based pattern discovery
     proposals = discover_rules_via_llm(signals, existing_rules)
 
-    # Record proposals
     for proposal in proposals:
         trigger  = proposal.get("trigger", "").strip().lower()
         sectors  = proposal.get("sectors", [])
         evidence = proposal.get("evidence", "")
 
-        if trigger and sectors:
+        if trigger and sectors and len(trigger) > 4:
             propose_rule(conn, trigger, sectors, evidence)
 
-    # Summary
-    pending = conn.execute(
+    pending  = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'"
     ).fetchone()[0]
     promoted = conn.execute(
