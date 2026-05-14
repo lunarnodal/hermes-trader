@@ -51,7 +51,10 @@ def init_db() -> sqlite3.Connection:
 
 
 def seed_static_rules(conn: sqlite3.Connection) -> None:
-    """Seed the baseline static rules from the scorer prompt"""
+    """Seed the baseline static rules — only if not already seeded"""
+    existing = conn.execute("SELECT COUNT(*) FROM inference_rules WHERE source = 'static'").fetchone()[0]
+    if existing > 0:
+        return  # Already seeded
     now = datetime.now(timezone.utc).isoformat()
     static_rules = [
         # Geopolitical
