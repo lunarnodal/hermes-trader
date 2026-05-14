@@ -12,6 +12,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -34,6 +37,31 @@ log = logging.getLogger(__name__)
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
+def get_system_prompt() -> str:
+    """Build system prompt with dynamic inference rules from DB"""
+    conn = init_db()
+    seed_static_rules(conn)
+    rules_text = build_prompt_rules(conn)
+    conn.close()
+    return f"""You are a financial news sentiment analyst.
+Analyze the headline and summary provided and return ONLY a JSON object.
+No explanation, no markdown, no preamble. Only the JSON object.
+
+Required fields:
+- sentiment: exactly one of "bullish", "bearish", "neutral"
+- confidence: float between 0.0 and 1.0
+- tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
+- sectors: array of ALL affected sectors including INDIRECT impacts
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
+- summary: max 2 sentence plain English summary of market impact
+
+{{rules_text}}
+
+Example output:
+{{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}}
+"""
+
+
 SYSTEM_PROMPT = """You are a financial news sentiment analyst.
 Analyze the headline and summary provided and return ONLY a JSON object.
 No explanation, no markdown, no preamble. Only the JSON object.
@@ -42,12 +70,36 @@ Required fields:
 - sentiment: exactly one of "bullish", "bearish", "neutral"
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
-- sectors: array of affected sectors or []
+- sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
 - summary: max 2 sentence plain English summary of market impact
 
+SECTOR INFERENCE RULES — always apply these cross-sector inferences:
+- War, conflict, military strikes, sanctions → always add "energy", "defense", "commodities"
+- Russia, Ukraine, Middle East conflict → always add "energy", "oil_gas", "commodities"
+- Iran, Saudi Arabia, OPEC news → always add "energy", "oil_gas"
+- Federal Reserve, interest rates, inflation → always add "financials", "real_estate", "utilities"
+- China trade, tariffs, export controls → always add "semiconductors", "technology", "manufacturing"
+- Supply chain disruption → always add "manufacturing", "technology", "retail"
+- Drought, floods, weather events → always add "agriculture", "insurance", "utilities"
+- Cybersecurity attacks → always add "technology", "cybersecurity", "financials"
+- Food prices, crop reports → always add "agriculture", "consumer_staples"
+- Dollar strength/weakness → always add "commodities", "emerging_markets", "exporters"
+- AI infrastructure, data center, GPU demand → always add "semiconductors", "ai_infrastructure", "data_center", "utilities"
+- Memory shortage, HBM, DRAM supply → always add "memory", "semiconductors", "ai_infrastructure"
+- Ukraine conflict specifically → always add "energy", "oil_gas", "neon_gas", "semiconductors", "chemicals"
+- Russia sanctions, Russian exports → always add "energy", "oil_gas", "commodities", "chemicals", "semiconductors"
+- China export controls, gallium, germanium → always add "semiconductors", "materials", "ai_infrastructure"
+- Taiwan, TSMC, strait tensions → always add "semiconductors", "ai_infrastructure", "technology"
+- Data center construction, hyperscaler capex → always add "utilities", "real_estate", "construction", "ai_infrastructure"
+- Specialty gases, neon, argon, krypton → always add "semiconductors", "chemicals", "manufacturing"
+- Power grid, electricity demand, energy infrastructure attacks → always add "utilities", "energy", "ai_infrastructure", "data_center"
+
 Example output:
-{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}"""
+{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}
+
+Example with cross-sector inference:
+{"sentiment":"bearish","confidence":0.78,"tickers":[],"sectors":["geopolitical","energy","oil_gas","defense","commodities"],"event_type":"geopolitical","summary":"Military strikes escalate regional conflict. Energy supply disruption risk elevated, defense sector demand increases."}"""
 
 
 def build_prompt(article: dict) -> str:
@@ -65,7 +117,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
         "stream": False,
         "options": {"temperature": 0.1, "num_predict": 4096},
         "messages": [
-            {"role": "system",  "content": SYSTEM_PROMPT},
+            {"role": "system",  "content": get_system_prompt()},
             {"role": "user",    "content": build_prompt(article)},
         ]
     }
