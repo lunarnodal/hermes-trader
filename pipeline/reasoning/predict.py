@@ -48,6 +48,12 @@ REASONING APPROACH:
 - Consider cross-sector dependencies (e.g. energy → manufacturing costs)
 - Express predictions as probabilities, never certainties
 
+CRITICAL OUTPUT RULES:
+- supporting_signals and conflicting_signals MUST contain the exact TITLE text from the signal data
+- Never use index numbers, never use "signal1" placeholders
+- Copy the exact title string from the TITLE field of each signal you reference
+- Always end your response with the ```prediction JSON block
+
 OUTPUT FORMAT — always end with this exact JSON block:
 ```prediction
 {
@@ -55,8 +61,8 @@ OUTPUT FORMAT — always end with this exact JSON block:
   "direction": "bullish|bearish|neutral|mixed",
   "probability": 0.0-1.0,
   "timeframe": "24h|48h|1w",
-  "supporting_signals": ["signal1", "signal2"],
-  "conflicting_signals": ["signal1"],
+  "supporting_signals": ["exact title from TITLE field", "exact title from TITLE field"],
+  "conflicting_signals": ["exact title from TITLE field"],
   "key_risk": "main risk to this prediction",
   "confidence": 0.0-1.0,
   "reasoning_summary": "2-3 sentence summary"
@@ -65,8 +71,8 @@ OUTPUT FORMAT — always end with this exact JSON block:
 
 CONSTRAINTS:
 - Never fabricate signals — only use what is provided
-- Never recommend trade sizes or leverage
-- Always cite specific signals from the data
+- Never recommend trade sizes or leverage  
+- Always cite exact TITLE text from signal data — no index numbers
 - This is analysis only, not financial advice"""
 
 
@@ -141,16 +147,16 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
     lines.append(f"Avg confidence: {avg_conf:.2f}")
     lines.append("")
 
-    for i, s in enumerate(signals, 1):
-        lines.append(f"[{i}] {s['sentiment'].upper()} ({s['confidence']:.2f}) | "
-                    f"relevance={s['score']:.3f} | {s['source']}")
-        lines.append(f"    Title: {s['title']}")
+    for s in signals:
+        sentiment_icon = "↑" if s["sentiment"] == "bullish" else "↓" if s["sentiment"] == "bearish" else "→"
+        lines.append(f"{sentiment_icon} {s['sentiment'].upper()} | conf={s['confidence']:.2f} | rel={s['score']:.3f} | {s['source']}")
+        lines.append(f"  TITLE: {s['title']}")
         if s.get("tickers"):
-            lines.append(f"    Tickers: {', '.join(s['tickers'])}")
+            lines.append(f"  TICKERS: {', '.join(s['tickers'])}")
         if s.get("sectors"):
-            lines.append(f"    Sectors: {', '.join(s['sectors'])}")
+            lines.append(f"  SECTORS: {', '.join(s['sectors'])}")
         if s.get("summary"):
-            lines.append(f"    Summary: {s['summary'][:150]}")
+            lines.append(f"  SUMMARY: {s['summary'][:150]}")
         lines.append("")
 
     return "\n".join(lines)
