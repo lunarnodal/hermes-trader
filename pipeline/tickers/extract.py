@@ -64,6 +64,18 @@ def extract_from_patterns(text: str) -> list[str]:
 
 # ─── Ticker DB ────────────────────────────────────────────────────────────────
 
+# Module-level connection cache — avoids reopening DB on every article
+_ticker_conn = None
+
+def get_ticker_conn() -> sqlite3.Connection:
+    """Get cached ticker DB connection"""
+    global _ticker_conn
+    if _ticker_conn is None:
+        _ticker_conn = init_ticker_db()
+        seed_common_tickers(_ticker_conn)
+    return _ticker_conn
+
+
 def init_ticker_db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -289,11 +301,9 @@ def extract_tickers(title: str, summary: str = "",
     regex_tickers = extract_from_patterns(text)
     found.update(regex_tickers)
 
-    # Stage 2 — company name lookup
-    conn = init_ticker_db()
-    seed_common_tickers(conn)
+    # Stage 2 — company name lookup (uses cached connection)
+    conn = get_ticker_conn()
     name_matches = lookup_by_name(conn, text)
-    conn.close()
 
     for ticker, confidence in name_matches:
         if confidence >= 0.8:
