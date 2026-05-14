@@ -30,3 +30,13 @@ source "$VENV/bin/activate"
 python3 pipeline/run.py >> "$LOGFILE" 2>&1
 
 echo "$(date -u) ── Cron run complete ──" >> "$LOGFILE"
+
+# Daily rule discovery (passed via --discover-rules flag)
+if [[ "$1" == "--discover-rules" ]]; then
+    echo "$(date -u) ── Rule discovery starting ──" >> "$LOGFILE"
+    cd "$PIPELINE_DIR"
+    source "$VENV/bin/activate"
+    python3 pipeline/rules/discover_rules.py >> "$LOGFILE" 2>&1
+    echo "$(date -u) ── Rule discovery complete ──" >> "$LOGFILE"
+    exit 0
+fi
