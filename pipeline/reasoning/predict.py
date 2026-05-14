@@ -171,8 +171,21 @@ def run_prediction(query: str, timeframe: str = "24h",
     """Run a full prediction reasoning cycle"""
     log.info(f"Running prediction: '{query}' ({timeframe})")
 
+    # Extract sector hints from query for taxonomy expansion
+    query_lower = query.lower()
+    from tickers.taxonomy import TAXONOMY, normalize_sector
+    sector_hints = []
+    for parent in TAXONOMY:
+        if parent in query_lower:
+            sector_hints.append(parent)
+        for child in TAXONOMY[parent].get("children", []):
+            if child.replace("_", " ") in query_lower or child in query_lower:
+                sector_hints.append(child)
+
+    log.info(f"Sector hints from query: {sector_hints}")
+
     # Query Qdrant
-    signals = query_qdrant(query, limit=limit)
+    signals = query_qdrant(query, limit=limit, sector_hint=sector_hints or None)
     if not signals:
         log.warning("No signals found for query")
         return {"error": "No relevant signals found"}
