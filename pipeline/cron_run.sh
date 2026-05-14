@@ -40,3 +40,13 @@ if [[ "$1" == "--discover-rules" ]]; then
     echo "$(date -u) ── Rule discovery complete ──" >> "$LOGFILE"
     exit 0
 fi
+
+# Prediction verification (passed via --verify flag)
+if [[ "$1" == "--verify" ]]; then
+    echo "$(date -u) ── Verification starting ──" >> "$LOGFILE"
+    cd "$PIPELINE_DIR"
+    source "$VENV/bin/activate"
+    python3 pipeline/paper_trading/verify.py >> "$LOGFILE" 2>&1
+    echo "$(date -u) ── Verification complete ──" >> "$LOGFILE"
+    exit 0
+fi

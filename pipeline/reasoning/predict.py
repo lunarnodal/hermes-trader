@@ -203,12 +203,21 @@ Based on these signals, provide your reasoning and prediction."""
 
     # Extract prediction JSON
     prediction = {}
-    if "```prediction" in content:
-        try:
-            pred_text = content.split("```prediction")[1].split("```")[0].strip()
-            prediction = json.loads(pred_text)
-        except Exception as e:
-            log.warning(f"Could not parse prediction JSON: {e}")
+    # Try ```prediction block first, then ```json
+    for marker in ["```prediction", "```json", "```"]:
+        if marker in content:
+            try:
+                pred_text = content.split(marker)[1].split("```")[0].strip()
+                if pred_text.startswith("json"):
+                    pred_text = pred_text[4:].strip()
+                candidate = json.loads(pred_text)
+                if isinstance(candidate, dict) and "direction" in candidate:
+                    prediction = candidate
+                    log.info(f"Parsed prediction from {marker} block")
+                    break
+            except Exception as e:
+                log.debug(f"Could not parse {marker} block: {e}")
+                continue
 
     return {
         "query":      query,
@@ -219,6 +228,21 @@ Based on these signals, provide your reasoning and prediction."""
         "prediction": prediction,
         "timestamp":  datetime.now(timezone.utc).isoformat()
     }
+
+
+def save_and_record(result: dict) -> Path:
+    """Save prediction to QNAP and record in paper trading DB"""
+    out_path = save_prediction(result)
+    try:
+        from paper_trading.db import init_db as init_paper_db, record_prediction as rec_pred
+        conn = init_paper_db()
+        pred_id = rec_pred(conn, result, str(out_path))
+        result["prediction_id"] = pred_id
+        conn.close()
+        log.info(f"Recorded in paper trading DB as prediction #{pred_id}")
+    except Exception as e:
+        log.error(f"Failed to record in paper trading DB: {e}")
+    return out_path
 
 
 def save_prediction(result: dict) -> Path:
@@ -258,4 +282,4 @@ if __name__ == "__main__":
         print(json.dumps(result["prediction"], indent=2))
 
     if args.save:
-        save_prediction(result)
+        save_and_record(result)
