@@ -150,9 +150,8 @@ NOISE_PATTERNS = [
     "st helier",
     # Form 13F filings — low signal value
     "form 13f",
-    # Fund shareholder meetings
-    "shareholder/an",
-    "shareholder meeting",
+    # NOTE: shareholder meetings intentionally NOT filtered
+    # They are high-risk price-moving events — tracked separately
 ]
 
 def is_noise(title: str) -> bool:

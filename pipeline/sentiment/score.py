@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tickers.extract import extract_tickers, init_ticker_db, seed_common_tickers
 from tickers.taxonomy import normalize_sectors
+from events.meetings import is_meeting_signal, extract_meeting_date, record_meeting, init_db as init_events_db, is_in_risk_window
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
@@ -211,6 +212,23 @@ def process_queue(queue_file: Path) -> Path | None:
             summary=article.get("summary", ""),
             llm_tickers=score.get("tickers", [])
         )
+
+        # Shareholder meeting detection
+        title   = article["title"]
+        summary = article.get("summary", "")
+        if is_meeting_signal(title, summary):
+            try:
+                meeting_date = extract_meeting_date(title, summary)
+                ev_conn = init_events_db()
+                # Use first ticker if available, else unknown
+                primary_ticker = enhanced_tickers[0] if enhanced_tickers else "UNKNOWN"
+                record_meeting(ev_conn, primary_ticker, title[:50],
+                               title, article.get("url", ""),
+                               meeting_date=meeting_date)
+                ev_conn.close()
+                log.info(f"Meeting detected: {primary_ticker} — {title[:50]}")
+            except Exception as e:
+                log.warning(f"Meeting tracking failed: {e}")
 
         signal = {
             "guid":       article["guid"],

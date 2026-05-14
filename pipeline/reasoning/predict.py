@@ -151,7 +151,21 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
 
     for s in signals:
         sentiment_icon = "↑" if s["sentiment"] == "bullish" else "↓" if s["sentiment"] == "bearish" else "→"
-        lines.append(f"{sentiment_icon} {s['sentiment'].upper()} | conf={s['confidence']:.2f} | rel={s['score']:.3f} | {s['source']}")
+        # Check if any ticker is in elevated risk window
+        risk_flag = ""
+        if s.get("tickers"):
+            try:
+                from events.meetings import init_db as init_ev_db, is_in_risk_window
+                ev_conn = init_ev_db()
+                for ticker in s["tickers"]:
+                    window = is_in_risk_window(ev_conn, ticker)
+                    if window:
+                        risk_flag = f" ⚠️ MEETING RISK ({ticker} meeting: {window.get('meeting_date','TBD')})"
+                        break
+                ev_conn.close()
+            except Exception:
+                pass
+        lines.append(f"{sentiment_icon} {s['sentiment'].upper()} | conf={s['confidence']:.2f} | rel={s['score']:.3f} | {s['source']}{risk_flag}")
         lines.append(f"  TITLE: {s['title']}")
         if s.get("tickers"):
             lines.append(f"  TICKERS: {', '.join(s['tickers'])}")
