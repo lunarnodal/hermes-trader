@@ -150,6 +150,11 @@ NOISE_PATTERNS = [
     "st helier",
     # Form 13F filings — low signal value
     "form 13f",
+    # Misc lifestyle/human interest
+    "burger stall",
+    "joys of his own",
+    "ex-rugby star",
+    "cost of living concerns in",
     # NOTE: shareholder meetings intentionally NOT filtered
     # They are high-risk price-moving events — tracked separately
 ]
