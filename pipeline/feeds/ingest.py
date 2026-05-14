@@ -138,6 +138,21 @@ NOISE_PATTERNS = [
     # Annual meeting notices
     "schedules annual meeting",
     "annual general meeting",
+    # Personal finance / lifestyle (MarketWatch)
+    "dead people claiming",
+    "buying homes to fit",
+    "social security?",
+    "more americans are",
+    "we're in our",
+    "here's one —",
+    "cost of living concerns",
+    "business daily",
+    "st helier",
+    # Form 13F filings — low signal value
+    "form 13f",
+    # Fund shareholder meetings
+    "shareholder/an",
+    "shareholder meeting",
 ]
 
 def is_noise(title: str) -> bool:
