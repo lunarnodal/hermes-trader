@@ -14,6 +14,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from tickers.extract import extract_tickers, init_ticker_db, seed_common_tickers
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -199,6 +202,14 @@ def process_queue(queue_file: Path) -> Path | None:
             log.warning(f"  Failed to score: {article['guid'][:12]}")
             continue
 
+        # Enhanced ticker extraction — combine LLM tickers with
+        # regex and company name lookup for higher accuracy
+        enhanced_tickers = extract_tickers(
+            title=article["title"],
+            summary=article.get("summary", ""),
+            llm_tickers=score.get("tickers", [])
+        )
+
         signal = {
             "guid":       article["guid"],
             "source":     article["source"],
@@ -208,7 +219,7 @@ def process_queue(queue_file: Path) -> Path | None:
             "scored_at":  datetime.now(timezone.utc).isoformat(),
             "sentiment":  score["sentiment"],
             "confidence": float(score["confidence"]),
-            "tickers":    score.get("tickers", []),
+            "tickers":    enhanced_tickers,
             "sectors":    score.get("sectors", []),
             "event_type": score.get("event_type", "other"),
             "summary":    score.get("summary", ""),
