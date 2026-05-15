@@ -215,9 +215,22 @@ def execute_recommendations(conn, recommendations: list[dict],
 
 
 def save_recommendations(conn, recommendations: list[dict]) -> None:
-    """Save recommendations to DB for dashboard display"""
+    """Save recommendations to DB for dashboard display — deduplicated"""
     now = datetime.now(timezone.utc).isoformat()
+    today = now[:10]
+    # Deduplicate — one entry per ticker/action per day
+    seen = set()
+    unique_recs = []
     for rec in recommendations:
+        key = (rec.get("ticker",""), rec.get("action",""))
+        if key not in seen:
+            seen.add(key)
+            unique_recs.append(rec)
+    # Delete today's existing recommendations before saving fresh ones
+    conn.execute(
+        "DELETE FROM recommendations WHERE DATE(generated_at) = ?", (today,)
+    )
+    for rec in unique_recs:
         conn.execute("""
             INSERT INTO recommendations
             (generated_at, ticker, action, sector, signal_count,
