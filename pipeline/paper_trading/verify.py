@@ -120,14 +120,23 @@ def fetch_price_change(ticker: str, hours_back: int) -> dict | None:
         close_price = valid[-1][1]
         pct_change  = (close_price - open_price) / open_price * 100
 
+        # Tiered thresholds based on timeframe
+        if hours_back <= 24:
+            bull_threshold, bear_threshold = 0.2, -0.2   # Tighter for 24h
+        elif hours_back <= 48:
+            bull_threshold, bear_threshold = 0.3, -0.3   # Medium for 48h
+        else:
+            bull_threshold, bear_threshold = 0.5, -0.5   # Wider for 1w
+
         return {
             "ticker":       ticker,
             "open_price":   round(open_price, 2),
             "close_price":  round(close_price, 2),
             "pct_change":   round(pct_change, 2),
-            "direction":    "bullish" if pct_change > 0.5 else
-                           "bearish" if pct_change < -0.5 else "neutral",
-            "hours":        hours_back
+            "direction":    "bullish" if pct_change > bull_threshold else
+                           "bearish" if pct_change < bear_threshold else "neutral",
+            "hours":        hours_back,
+            "threshold_used": bull_threshold
         }
 
     except Exception as e:
@@ -197,7 +206,8 @@ def verify_expired_predictions(conn: sqlite3.Connection) -> int:
         actual_direction = price_data["direction"]
         notes = (f"Verified via {etf}: "
                  f"{price_data['open_price']} → {price_data['close_price']} "
-                 f"({price_data['pct_change']:+.2f}%)")
+                 f"({price_data['pct_change']:+.2f}%) "
+                 f"threshold=±{price_data.get('threshold_used', 0.2):.1f}%")
 
         verify_prediction(conn, pred_id, actual_direction, notes)
         verified_count += 1
