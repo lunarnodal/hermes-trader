@@ -15,6 +15,8 @@ from flask import Flask, jsonify, render_template_string
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paper_trading.db import init_db, get_performance_summary
+from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
+                          get_cash_balance, get_portfolio_value, CONFIG as PORT_CONFIG)
 from qdrant_client import QdrantClient
 
 app = Flask(__name__)
@@ -238,6 +240,119 @@ async function load() {
       </div>`).join('')}
     </div>
 
+    <!-- Portfolio Summary -->
+    <div class="card">
+      <h2>Portfolio</h2>
+      <div class="stat">
+        <span class="stat-label">Total Value</span>
+        <span class="stat-value ${data.portfolio?.return_pct >= 0 ? 'bullish' : 'bearish'}">
+          $${data.portfolio?.total_value?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Cash</span>
+        <span class="stat-value">$${data.portfolio?.cash?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Positions Value</span>
+        <span class="stat-value">$${data.portfolio?.positions_value?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Return</span>
+        <span class="stat-value ${data.portfolio?.return_pct >= 0 ? 'bullish' : 'bearish'}">
+          ${data.portfolio?.return_pct >= 0 ? '+' : ''}${data.portfolio?.return_pct?.toFixed(2)}%</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Open Positions</span>
+        <span class="stat-value">${data.portfolio?.open_count || 0}</span>
+      </div>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="card full-width">
+      <h2>Open Positions</h2>
+      ${(data.positions || []).length === 0 ?
+        '<div class="stat"><span class="stat-label">No open positions</span></div>' :
+        `<table>
+          <thead><tr>
+            <th>Ticker</th><th>Sector</th><th>Shares</th>
+            <th>Entry</th><th>Current</th><th>Cost</th>
+            <th>Value</th><th>P&L</th><th>P&L%</th>
+            <th>Stop</th><th>Target</th><th>Days</th>
+          </tr></thead>
+          <tbody>
+            ${(data.positions || []).map(p => `
+            <tr>
+              <td><strong>${p.ticker}</strong></td>
+              <td>${p.sector}</td>
+              <td>${p.shares}</td>
+              <td>$${p.entry_price?.toFixed(2)}</td>
+              <td>$${p.current_price?.toFixed(2)}</td>
+              <td>$${p.cost_basis?.toFixed(2)}</td>
+              <td>$${p.current_value?.toFixed(2)}</td>
+              <td class="${p.unrealized_pnl >= 0 ? 'correct' : 'wrong'}">
+                $${p.unrealized_pnl?.toFixed(2)}</td>
+              <td class="${p.unrealized_pct >= 0 ? 'correct' : 'wrong'}">
+                ${p.unrealized_pct >= 0 ? '+' : ''}${p.unrealized_pct?.toFixed(2)}%</td>
+              <td class="bearish">$${p.stop_loss?.toFixed(2)}</td>
+              <td class="bullish">$${p.take_profit?.toFixed(2)}</td>
+              <td>${p.hold_days}d</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+    </div>
+
+    <!-- Recommendations -->
+    <div class="card full-width">
+      <h2>Latest Recommendations</h2>
+      <table>
+        <thead><tr>
+          <th>Action</th><th>Ticker</th><th>Sector</th>
+          <th>Signals</th><th>Confidence</th>
+          <th>Shares</th><th>Value</th><th>Rationale</th><th>Generated</th>
+        </tr></thead>
+        <tbody>
+          ${(data.recommendations || []).map(r => `
+          <tr>
+            <td><span class="badge ${r.action === 'BUY' ? 'badge-bull' :
+                                     r.action === 'SELL' ? 'badge-bear' :
+                                     'badge-neut'}">${r.action}</span></td>
+            <td><strong>${r.ticker}</strong></td>
+            <td>${r.sector}</td>
+            <td>${r.signals}</td>
+            <td>${r.confidence}%</td>
+            <td>${r.shares || '—'}</td>
+            <td>${r.value ? '$' + r.value.toFixed(2) : '—'}</td>
+            <td>${r.rationale}</td>
+            <td class="timestamp">${r.generated}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Closed Positions -->
+    ${(data.closed_positions || []).length > 0 ? `
+    <div class="card full-width">
+      <h2>Closed Positions</h2>
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>Entry</th><th>Exit</th>
+          <th>P&L</th><th>P&L%</th><th>Reason</th><th>Date</th>
+        </tr></thead>
+        <tbody>
+          ${data.closed_positions.map(c => `
+          <tr>
+            <td><strong>${c.ticker}</strong></td>
+            <td>$${c.entry?.toFixed(2)}</td>
+            <td>$${c.exit?.toFixed(2)}</td>
+            <td class="${c.pnl >= 0 ? 'correct' : 'wrong'}">$${c.pnl?.toFixed(2)}</td>
+            <td class="${c.pnl_pct >= 0 ? 'correct' : 'wrong'}">${c.pnl_pct >= 0 ? '+' : ''}${c.pnl_pct?.toFixed(2)}%</td>
+            <td>${c.reason}</td>
+            <td class="timestamp">${c.date}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
     <!-- Recent Signals -->
     <div class="card full-width">
       <h2>Recent Signals</h2>
@@ -436,6 +551,95 @@ def api_data():
             data['last_run'] = last_complete[-1][:19]
     except:
         data['last_run'] = 'N/A'
+
+    # Portfolio data
+    try:
+        port_conn    = init_portfolio_db()
+        cash         = get_cash_balance(port_conn)
+        positions    = get_open_positions(port_conn)
+        port_value   = get_portfolio_value(port_conn)
+        starting     = PORT_CONFIG["starting_capital"]
+        ret_pct      = (port_value - starting) / starting * 100
+
+        # Recent recommendations
+        recs = port_conn.execute("""
+            SELECT ticker, action, sector, signal_count, avg_confidence,
+                   suggested_shares, suggested_value, rationale, generated_at, status
+            FROM recommendations
+            ORDER BY generated_at DESC LIMIT 10
+        """).fetchall()
+
+        # Closed positions for P&L history
+        closed = port_conn.execute("""
+            SELECT ticker, entry_price, exit_price, pnl, pnl_pct,
+                   exit_reason, exit_date
+            FROM positions WHERE status = 'closed'
+            ORDER BY exit_date DESC LIMIT 10
+        """).fetchall()
+
+        port_conn.close()
+
+        data['portfolio'] = {
+            'cash':          round(cash, 2),
+            'positions_value': round(port_value - cash, 2),
+            'total_value':   round(port_value, 2),
+            'starting':      starting,
+            'return_pct':    round(ret_pct, 2),
+            'open_count':    len(positions),
+        }
+
+        data['positions'] = [
+            {
+                'ticker':          p['ticker'],
+                'sector':          p.get('sector', ''),
+                'shares':          p['shares'],
+                'entry_price':     p['entry_price'],
+                'current_price':   p['current_price'],
+                'cost_basis':      p['cost_basis'],
+                'current_value':   p['current_value'],
+                'unrealized_pnl':  p['unrealized_pnl'],
+                'unrealized_pct':  p['unrealized_pct'],
+                'stop_loss':       p['stop_loss'],
+                'take_profit':     p['take_profit'],
+                'hold_days':       p['hold_days'],
+            }
+            for p in positions
+        ]
+
+        data['recommendations'] = [
+            {
+                'ticker':     r[0],
+                'action':     r[1],
+                'sector':     r[2],
+                'signals':    r[3],
+                'confidence': round(r[4] * 100) if r[4] else 0,
+                'shares':     r[5],
+                'value':      round(r[6], 2) if r[6] else 0,
+                'rationale':  r[7][:80] if r[7] else '',
+                'generated':  r[8][:16].replace('T', ' ') if r[8] else '',
+                'status':     r[9],
+            }
+            for r in recs
+        ]
+
+        data['closed_positions'] = [
+            {
+                'ticker':     c[0],
+                'entry':      c[1],
+                'exit':       c[2],
+                'pnl':        round(c[3], 2) if c[3] else 0,
+                'pnl_pct':    round(c[4], 2) if c[4] else 0,
+                'reason':     c[5],
+                'date':       c[6][:10] if c[6] else '',
+            }
+            for c in closed
+        ]
+
+    except Exception as e:
+        data['portfolio'] = {}
+        data['positions'] = []
+        data['recommendations'] = []
+        data['closed_positions'] = []
 
     return jsonify(data)
 
