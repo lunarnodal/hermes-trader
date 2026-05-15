@@ -36,6 +36,19 @@ PATTERNS = [
 ]
 
 # Known false positives — common words that look like tickers
+# Exchange and index names that get mismatched as tickers
+EXCHANGE_NAMES = {
+    'NDAQ',   # Nasdaq Inc — confused with Nasdaq exchange
+    'NYSE',   # NYSE Group
+    'CBOE',   # confused with exchange reference
+    'SP',     # S&P reference
+    'DOW',    # Dow Jones reference
+    'SPX',    # S&P 500 index
+    'DJIA',   # Dow Jones index
+    'VIX',    # Volatility index
+    'DXY',    # Dollar index
+}
+
 FALSE_POSITIVES = {
     'A', 'I', 'AM', 'PM', 'US', 'UK', 'EU', 'UN', 'AI', 'IT',
     'CEO', 'CFO', 'COO', 'CTO', 'IPO', 'ETF', 'GDP', 'PPI', 'CPI',
@@ -57,7 +70,9 @@ def extract_from_patterns(text: str) -> list[str]:
     for pattern in PATTERNS:
         for m in pattern.finditer(text):
             ticker = m.group(1).upper().strip()
-            if ticker not in FALSE_POSITIVES and len(ticker) >= 2:
+            if (ticker not in FALSE_POSITIVES
+                    and ticker not in EXCHANGE_NAMES
+                    and len(ticker) >= 2):
                 found.add(ticker)
     return sorted(found)
 
@@ -112,7 +127,7 @@ def lookup_by_name(conn: sqlite3.Connection,
     ).fetchall()
 
     for alias, ticker, confidence in aliases:
-        if alias.lower() in text_lower:
+        if alias.lower() in text_lower and ticker not in EXCHANGE_NAMES:
             results.append((ticker, confidence))
 
     # Check full company names

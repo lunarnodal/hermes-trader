@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""
+Portfolio database
+Tracks positions, transactions, P&L, and recommendations
+"""
+
+import sqlite3
+import json
+import os
+import logging
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+DB_PATH = Path(os.environ.get("PORTFOLIO_DB_PATH",
+               "/home/trading/trading-ai/data/portfolio.db"))
+
+log = logging.getLogger(__name__)
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+
+CONFIG = {
+    "starting_capital":     50_000.00,
+    "max_position_pct":     0.10,      # 10% max per position
+    "min_cash_reserve_pct": 0.10,      # 10% minimum cash
+    "max_sector_pct":       0.25,      # 25% max per sector
+    "take_profit_pct":      0.06,      # 6% take profit (midpoint of 5-7%)
+    "stop_loss_pct":        0.02,      # 2% stop loss
+    "min_hold_days":        3,         # minimum 3 trading days
+    "max_hold_days":        5,         # re-evaluate after 5 trading days
+    "max_new_positions_week": 2,       # max 2 new positions per week
+    "confidence_tiers": {
+        "low":    (0.60, 0.70, 0.04),  # conf range → position % (midpoint)
+        "medium": (0.70, 0.80, 0.06),
+        "high":   (0.80, 1.00, 0.085),
+    },
+    "market_open":  "09:30",
+    "market_close": "16:00",
+    "entry_windows": [
+        ("09:30", "10:00"),   # morning window
+        ("15:30", "16:00"),   # close window
+    ],
+    "timezone": "America/New_York",
+}
+
+
+def init_db() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS portfolio_config (
+            key    TEXT PRIMARY KEY,
+            value  TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS cash_ledger (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp    TEXT NOT NULL,
+            amount       REAL NOT NULL,
+            balance      REAL NOT NULL,
+            description  TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS positions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker           TEXT NOT NULL,
+            sector           TEXT,
+            shares           REAL NOT NULL,
+            entry_price      REAL NOT NULL,
+            entry_date       TEXT NOT NULL,
+            entry_signal_id  INTEGER,
+            current_price    REAL,
+            last_price_update TEXT,
+            stop_loss        REAL NOT NULL,
+            take_profit      REAL NOT NULL,
+            status           TEXT DEFAULT 'open',
+            exit_price       REAL,
+            exit_date        TEXT,
+            exit_reason      TEXT,
+            pnl              REAL,
+            pnl_pct          REAL,
+            hold_days        INTEGER DEFAULT 0,
+            notes            TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS transactions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp        TEXT NOT NULL,
+            ticker           TEXT NOT NULL,
+            action           TEXT NOT NULL,
+            shares           REAL NOT NULL,
+            price            REAL NOT NULL,
+            value            REAL NOT NULL,
+            position_id      INTEGER REFERENCES positions(id),
+            signal_id        INTEGER,
+            reason           TEXT,
+            cash_before      REAL,
+            cash_after       REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS recommendations (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            generated_at     TEXT NOT NULL,
+            ticker           TEXT NOT NULL,
+            action           TEXT NOT NULL,
+            sector           TEXT,
+            signal_count     INTEGER DEFAULT 0,
+            avg_confidence   REAL DEFAULT 0,
+            suggested_shares REAL,
+            suggested_value  REAL,
+            rationale        TEXT,
+            status           TEXT DEFAULT 'pending',
+            executed_at      TEXT,
+            position_id      INTEGER REFERENCES positions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_at      TEXT NOT NULL,
+            cash             REAL NOT NULL,
+            positions_value  REAL NOT NULL,
+            total_value      REAL NOT NULL,
+            total_return_pct REAL NOT NULL,
+            open_positions   INTEGER DEFAULT 0,
+            notes            TEXT
+        );
+    """)
+
+    # Seed starting capital if not already done
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM cash_ledger"
+    ).fetchone()[0]
+
+    if existing == 0:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute("""
+            INSERT INTO cash_ledger (timestamp, amount, balance, description)
+            VALUES (?, ?, ?, 'Initial capital')
+        """, (now, CONFIG["starting_capital"], CONFIG["starting_capital"]))
+        conn.commit()
+        log.info(f"Portfolio initialized with ${CONFIG['starting_capital']:,.2f}")
+
+    return conn
+
+
+# ─── Cash management ──────────────────────────────────────────────────────────
+
+def get_cash_balance(conn: sqlite3.Connection) -> float:
+    row = conn.execute(
+        "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else 0.0
+
+
+def update_cash(conn: sqlite3.Connection, amount: float,
+                description: str) -> float:
+    current = get_cash_balance(conn)
+    new_balance = current + amount
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("""
+        INSERT INTO cash_ledger (timestamp, amount, balance, description)
+        VALUES (?, ?, ?, ?)
+    """, (now, amount, new_balance, description))
+    conn.commit()
+    return new_balance
+
+
+# ─── Position management ──────────────────────────────────────────────────────
+
+def get_open_positions(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("""
+        SELECT id, ticker, sector, shares, entry_price, entry_date,
+               current_price, stop_loss, take_profit, hold_days, notes
+        FROM positions WHERE status = 'open'
+        ORDER BY entry_date ASC
+    """).fetchall()
+    return [
+        {
+            "id":            row[0],
+            "ticker":        row[1],
+            "sector":        row[2],
+            "shares":        row[3],
+            "entry_price":   row[4],
+            "entry_date":    row[5],
+            "current_price": row[6] or row[4],
+            "stop_loss":     row[7],
+            "take_profit":   row[8],
+            "hold_days":     row[9],
+            "notes":         row[10],
+            "cost_basis":    round(row[3] * row[4], 2),
+            "current_value": round(row[3] * (row[6] or row[4]), 2),
+            "unrealized_pnl": round(row[3] * ((row[6] or row[4]) - row[4]), 2),
+            "unrealized_pct": round(((row[6] or row[4]) - row[4]) / row[4] * 100, 2),
+        }
+        for row in rows
+    ]
+
+
+def get_positions_value(conn: sqlite3.Connection) -> float:
+    positions = get_open_positions(conn)
+    return sum(p["current_value"] for p in positions)
+
+
+def get_sector_exposure(conn: sqlite3.Connection) -> dict:
+    positions = get_open_positions(conn)
+    total = get_portfolio_value(conn)
+    exposure = {}
+    for p in positions:
+        sector = p["sector"] or "unknown"
+        exposure[sector] = exposure.get(sector, 0) + p["current_value"]
+    return {k: round(v / total * 100, 1) for k, v in exposure.items()}
+
+
+def get_portfolio_value(conn: sqlite3.Connection) -> float:
+    return get_cash_balance(conn) + get_positions_value(conn)
+
+
+def positions_this_week(conn: sqlite3.Connection) -> int:
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    return conn.execute("""
+        SELECT COUNT(*) FROM transactions
+        WHERE action = 'BUY' AND timestamp >= ?
+    """, (week_ago,)).fetchone()[0]
+
+
+# ─── Position sizing ──────────────────────────────────────────────────────────
+
+def calculate_position_size(confidence: float,
+                             current_price: float,
+                             portfolio_value: float,
+                             cash: float) -> dict:
+    """Calculate position size based on confidence tier"""
+    # Determine position percentage from confidence
+    pos_pct = 0.04  # default
+    for tier, (low, high, pct) in CONFIG["confidence_tiers"].items():
+        if low <= confidence < high:
+            pos_pct = pct
+            break
+
+    # Cap at max position size
+    pos_pct = min(pos_pct, CONFIG["max_position_pct"])
+
+    # Calculate dollar amount
+    target_value = portfolio_value * pos_pct
+
+    # Ensure we don't exceed available cash minus reserve
+    available_cash = cash - (portfolio_value * CONFIG["min_cash_reserve_pct"])
+    target_value = min(target_value, available_cash)
+
+    if target_value <= 0 or current_price <= 0:
+        return {"shares": 0, "value": 0, "position_pct": 0}
+
+    shares = int(target_value / current_price)  # whole shares only
+    actual_value = shares * current_price
+
+    return {
+        "shares":       shares,
+        "value":        round(actual_value, 2),
+        "position_pct": round(actual_value / portfolio_value * 100, 1),
+        "stop_loss":    round(current_price * (1 - CONFIG["stop_loss_pct"]), 2),
+        "take_profit":  round(current_price * (1 + CONFIG["take_profit_pct"]), 2),
+    }
+
+
+# ─── Trade execution ──────────────────────────────────────────────────────────
+
+def open_position(conn: sqlite3.Connection, ticker: str, sector: str,
+                  shares: int, entry_price: float,
+                  signal_id: int = None, notes: str = "") -> int:
+    """Open a new paper position"""
+    now   = datetime.now(timezone.utc).isoformat()
+    value = shares * entry_price
+    cash  = get_cash_balance(conn)
+
+    if value > cash:
+        log.warning(f"Insufficient cash: need ${value:.2f}, have ${cash:.2f}")
+        return -1
+
+    stop_loss   = round(entry_price * (1 - CONFIG["stop_loss_pct"]), 2)
+    take_profit = round(entry_price * (1 + CONFIG["take_profit_pct"]), 2)
+
+    cursor = conn.execute("""
+        INSERT INTO positions
+        (ticker, sector, shares, entry_price, entry_date, entry_signal_id,
+         current_price, stop_loss, take_profit, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (ticker, sector, shares, entry_price, now, signal_id,
+          entry_price, stop_loss, take_profit, notes))
+    position_id = cursor.lastrowid
+
+    # Record transaction
+    new_cash = update_cash(conn, -value, f"BUY {shares} {ticker} @ ${entry_price}")
+    conn.execute("""
+        INSERT INTO transactions
+        (timestamp, ticker, action, shares, price, value,
+         position_id, signal_id, reason, cash_before, cash_after)
+        VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'signal', ?, ?)
+    """, (now, ticker, shares, entry_price, value,
+          position_id, signal_id, cash, new_cash))
+
+    conn.commit()
+    log.info(f"OPENED: {shares} {ticker} @ ${entry_price:.2f} "
+             f"(value=${value:.2f}, SL=${stop_loss}, TP=${take_profit})")
+    return position_id
+
+
+def close_position(conn: sqlite3.Connection, position_id: int,
+                   exit_price: float, reason: str) -> dict:
+    """Close a paper position"""
+    pos = conn.execute("""
+        SELECT ticker, shares, entry_price, sector
+        FROM positions WHERE id = ? AND status = 'open'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Position #{position_id} not found or already closed")
+        return {}
+
+    ticker, shares, entry_price, sector = pos
+    now    = datetime.now(timezone.utc).isoformat()
+    value  = shares * exit_price
+    pnl    = (exit_price - entry_price) * shares
+    pnl_pct = (exit_price - entry_price) / entry_price * 100
+    cash   = get_cash_balance(conn)
+
+    conn.execute("""
+        UPDATE positions
+        SET status='closed', exit_price=?, exit_date=?,
+            exit_reason=?, pnl=?, pnl_pct=?
+        WHERE id=?
+    """, (exit_price, now, reason, round(pnl, 2), round(pnl_pct, 2), position_id))
+
+    new_cash = update_cash(conn, value, f"SELL {shares} {ticker} @ ${exit_price} ({reason})")
+    conn.execute("""
+        INSERT INTO transactions
+        (timestamp, ticker, action, shares, price, value,
+         position_id, reason, cash_before, cash_after)
+        VALUES (?, ?, 'SELL', ?, ?, ?, ?, ?, ?, ?)
+    """, (now, ticker, shares, exit_price, value,
+          position_id, reason, cash, new_cash))
+
+    conn.commit()
+    outcome = "WIN" if pnl > 0 else "LOSS"
+    log.info(f"CLOSED: {shares} {ticker} @ ${exit_price:.2f} "
+             f"P&L=${pnl:+.2f} ({pnl_pct:+.1f}%) [{reason}] {outcome}")
+
+    return {
+        "ticker":   ticker,
+        "shares":   shares,
+        "entry":    entry_price,
+        "exit":     exit_price,
+        "pnl":      round(pnl, 2),
+        "pnl_pct":  round(pnl_pct, 2),
+        "reason":   reason,
+        "outcome":  outcome
+    }
+
+
+# ─── Snapshot ─────────────────────────────────────────────────────────────────
+
+def take_snapshot(conn: sqlite3.Connection) -> dict:
+    cash       = get_cash_balance(conn)
+    pos_value  = get_positions_value(conn)
+    total      = cash + pos_value
+    ret_pct    = (total - CONFIG["starting_capital"]) / CONFIG["starting_capital"] * 100
+    open_pos   = len(get_open_positions(conn))
+    now        = datetime.now(timezone.utc).isoformat()
+
+    conn.execute("""
+        INSERT INTO portfolio_snapshots
+        (snapshot_at, cash, positions_value, total_value,
+         total_return_pct, open_positions)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (now, cash, pos_value, total, round(ret_pct, 3), open_pos))
+    conn.commit()
+
+    return {
+        "cash":           round(cash, 2),
+        "positions":      round(pos_value, 2),
+        "total":          round(total, 2),
+        "return_pct":     round(ret_pct, 3),
+        "open_positions": open_pos,
+    }
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    conn = init_db()
+    snap = take_snapshot(conn)
+    print(f"\nPortfolio initialized:")
+    print(f"  Cash:       ${snap['cash']:,.2f}")
+    print(f"  Positions:  ${snap['positions']:,.2f}")
+    print(f"  Total:      ${snap['total']:,.2f}")
+    print(f"  Return:     {snap['return_pct']:+.2f}%")
+    conn.close()
