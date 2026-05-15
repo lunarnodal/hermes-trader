@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""
+Portfolio manager
+Orchestrates recommendations → paper trades
+Runs daily within market hours
+Respects PDT rules, position limits, sector concentration limits
+"""
+
+import json
+import logging
+import os
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from portfolio.db import (
+    init_db, get_cash_balance, get_open_positions, get_portfolio_value,
+    get_sector_exposure, positions_this_week, open_position, close_position,
+    take_snapshot, calculate_position_size, CONFIG
+)
+from portfolio.selector import (
+    get_recent_signals, generate_recommendations, fetch_current_price
+)
+
+log = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("/mnt/qnap/timeseries/logs/portfolio.log"),
+        logging.StreamHandler()
+    ]
+)
+
+ET = ZoneInfo("America/New_York")
+
+
+def is_market_hours() -> bool:
+    """Check if currently within US market hours"""
+    now_et = datetime.now(ET)
+    # Skip weekends
+    if now_et.weekday() >= 5:
+        return False
+    market_open  = now_et.replace(hour=9,  minute=30, second=0)
+    market_close = now_et.replace(hour=16, minute=0,  second=0)
+    return market_open <= now_et <= market_close
+
+
+def is_entry_window() -> bool:
+    """Check if within preferred entry windows (morning or close)"""
+    now_et = datetime.now(ET)
+    if now_et.weekday() >= 5:
+        return False
+    windows = [
+        (now_et.replace(hour=9,  minute=30), now_et.replace(hour=10, minute=0)),
+        (now_et.replace(hour=15, minute=30), now_et.replace(hour=16, minute=0)),
+    ]
+    return any(start <= now_et <= end for start, end in windows)
+
+
+def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
+    """Check all open positions for stop loss / take profit triggers"""
+    positions = get_open_positions(conn)
+    actions   = []
+
+    for pos in positions:
+        ticker        = pos["ticker"]
+        current_price = fetch_current_price(ticker)
+
+        if not current_price:
+            continue
+
+        # Update current price in DB
+        conn.execute("""
+            UPDATE positions SET current_price = ?, last_price_update = ?
+            WHERE id = ? AND status = 'open'
+        """, (current_price, datetime.now(timezone.utc).isoformat(), pos["id"]))
+
+        pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"] * 100
+
+        if current_price >= pos["take_profit"]:
+            reason = f"take_profit (+{pnl_pct:.1f}%)"
+            log.info(f"TAKE PROFIT: {ticker} @ ${current_price:.2f} "
+                     f"(entry=${pos['entry_price']:.2f}, +{pnl_pct:.1f}%)")
+            if not dry_run:
+                result = close_position(conn, pos["id"], current_price, reason)
+                actions.append({"action": "SELL", "reason": "take_profit", **result})
+
+        elif current_price <= pos["stop_loss"]:
+            reason = f"stop_loss ({pnl_pct:.1f}%)"
+            log.info(f"STOP LOSS: {ticker} @ ${current_price:.2f} "
+                     f"(entry=${pos['entry_price']:.2f}, {pnl_pct:.1f}%)")
+            if not dry_run:
+                result = close_position(conn, pos["id"], current_price, reason)
+                actions.append({"action": "SELL", "reason": "stop_loss", **result})
+
+    conn.commit()
+    return actions
+
+
+def check_time_exits(conn, dry_run: bool = False) -> list[dict]:
+    """Check positions that have exceeded max hold days"""
+    positions = get_open_positions(conn)
+    actions   = []
+    now       = datetime.now(timezone.utc)
+
+    for pos in positions:
+        entry_date = datetime.fromisoformat(
+            pos["entry_date"].replace("Z", "+00:00"))
+        hold_days  = (now - entry_date).days
+
+        # Update hold days
+        conn.execute(
+            "UPDATE positions SET hold_days = ? WHERE id = ?",
+            (hold_days, pos["id"])
+        )
+
+        if hold_days >= CONFIG["max_hold_days"]:
+            ticker        = pos["ticker"]
+            current_price = fetch_current_price(ticker) or pos["entry_price"]
+            pnl_pct       = (current_price - pos["entry_price"]) / pos["entry_price"] * 100
+            reason        = f"time_exit ({hold_days} days, {pnl_pct:+.1f}%)"
+
+            log.info(f"TIME EXIT: {ticker} held {hold_days} days "
+                     f"P&L={pnl_pct:+.1f}%")
+            if not dry_run:
+                result = close_position(conn, pos["id"], current_price, reason)
+                actions.append({"action": "SELL", "reason": "time_exit", **result})
+
+    conn.commit()
+    return actions
+
+
+def execute_recommendations(conn, recommendations: list[dict],
+                            dry_run: bool = False) -> list[dict]:
+    """Execute BUY recommendations respecting all constraints"""
+    executed  = []
+    cash      = get_cash_balance(conn)
+    port_val  = get_portfolio_value(conn)
+    week_buys = positions_this_week(conn)
+    sector_exp = get_sector_exposure(conn)
+
+    for rec in recommendations:
+        if rec["action"] != "BUY":
+            continue
+
+        ticker  = rec["ticker"]
+        sector  = rec["sector"]
+        price   = rec.get("current_price", 0)
+        shares  = rec.get("suggested_shares", 0)
+        value   = rec.get("suggested_value", 0)
+
+        # Check weekly trade limit
+        if week_buys >= CONFIG["max_new_positions_week"]:
+            log.info(f"SKIP {ticker} — weekly limit reached ({week_buys} trades)")
+            continue
+
+        # Check sector concentration
+        current_sector_pct = sector_exp.get(sector, 0)
+        if current_sector_pct >= CONFIG["max_sector_pct"] * 100:
+            log.info(f"SKIP {ticker} — sector {sector} at {current_sector_pct:.1f}% "
+                     f"(max {CONFIG['max_sector_pct']*100:.0f}%)")
+            continue
+
+        # Check cash reserve
+        reserve = port_val * CONFIG["min_cash_reserve_pct"]
+        if cash - value < reserve:
+            log.info(f"SKIP {ticker} — would breach cash reserve "
+                     f"(need ${reserve:.0f} reserve)")
+            continue
+
+        # Check entry window
+        if not is_entry_window() and not dry_run:
+            log.info(f"SKIP {ticker} — outside entry window")
+            continue
+
+        if shares <= 0 or price <= 0:
+            continue
+
+        log.info(f"{'[DRY RUN] ' if dry_run else ''}BUY {shares} {ticker} "
+                 f"@ ${price:.2f} = ${value:.2f} "
+                 f"(sector={sector}, conf={rec.get('avg_confidence', 0):.0%})")
+
+        if not dry_run:
+            pos_id = open_position(
+                conn, ticker, sector, shares, price,
+                notes=rec.get("rationale", "")
+            )
+            if pos_id > 0:
+                executed.append({
+                    "action":  "BUY",
+                    "ticker":  ticker,
+                    "shares":  shares,
+                    "price":   price,
+                    "value":   value,
+                    "pos_id":  pos_id
+                })
+                week_buys += 1
+                cash      -= value
+        else:
+            executed.append({
+                "action":  "BUY [DRY RUN]",
+                "ticker":  ticker,
+                "shares":  shares,
+                "price":   price,
+                "value":   value,
+            })
+
+    return executed
+
+
+def save_recommendations(conn, recommendations: list[dict]) -> None:
+    """Save recommendations to DB for dashboard display"""
+    now = datetime.now(timezone.utc).isoformat()
+    for rec in recommendations:
+        conn.execute("""
+            INSERT INTO recommendations
+            (generated_at, ticker, action, sector, signal_count,
+             avg_confidence, suggested_shares, suggested_value, rationale)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            now,
+            rec.get("ticker", ""),
+            rec.get("action", ""),
+            rec.get("sector", ""),
+            rec.get("signal_count", 0),
+            rec.get("avg_confidence", rec.get("avg_conf", 0)),
+            rec.get("suggested_shares", 0),
+            rec.get("suggested_value", 0),
+            rec.get("rationale", "")[:200],
+        ))
+    conn.commit()
+
+
+def run_portfolio_cycle(dry_run: bool = True) -> dict:
+    """
+    Main portfolio management cycle
+    dry_run=True: generate recommendations only, don't execute
+    dry_run=False: execute trades
+    """
+    log.info(f"═══ Portfolio cycle starting "
+             f"({'DRY RUN' if dry_run else 'LIVE'}) ═══")
+
+    conn     = init_db()
+    results  = {"exits": [], "entries": [], "recommendations": []}
+
+    # ── Step 1: Check exits (stop loss / take profit / time) ──────────────────
+    if is_market_hours() or dry_run:
+        exits = check_stop_loss_take_profit(conn, dry_run)
+        exits += check_time_exits(conn, dry_run)
+        results["exits"] = exits
+        if exits:
+            log.info(f"Exit actions: {len(exits)}")
+
+    # ── Step 2: Load signals and predictions ──────────────────────────────────
+    signals   = get_recent_signals(48)
+    positions = get_open_positions(conn)
+    cash      = get_cash_balance(conn)
+    port_val  = get_portfolio_value(conn)
+
+    log.info(f"Portfolio: ${cash:,.2f} cash + "
+             f"${port_val - cash:,.2f} positions = "
+             f"${port_val:,.2f} total")
+
+    # Load recent predictions from paper trading DB
+    try:
+        from paper_trading.db import init_db as init_paper_db
+        paper_conn = init_paper_db()
+        pred_rows  = paper_conn.execute("""
+            SELECT query, timeframe, prediction_file
+            FROM predictions
+            WHERE created_at >= ?
+            ORDER BY created_at DESC LIMIT 10
+        """, ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),)
+        ).fetchall()
+        paper_conn.close()
+
+        # Load prediction details from files
+        predictions = []
+        pred_dir    = Path("/mnt/qnap/timeseries/predictions")
+        for query, timeframe, pred_file in pred_rows:
+            if pred_file and Path(pred_file).exists():
+                try:
+                    with open(pred_file) as f:
+                        pred_data = json.load(f)
+                        predictions.append(pred_data)
+                except:
+                    pass
+
+        log.info(f"Loaded {len(predictions)} recent predictions")
+
+    except Exception as e:
+        log.error(f"Could not load predictions: {e}")
+        predictions = []
+
+    # ── Step 3: Generate recommendations ─────────────────────────────────────
+    if predictions:
+        recommendations = generate_recommendations(
+            predictions, signals, positions, cash, port_val
+        )
+        # Deduplicate — keep highest-value BUY per ticker
+        seen_tickers = {}
+        deduped = []
+        for rec in recommendations:
+            ticker = rec["ticker"]
+            action = rec["action"]
+            if action == "BUY":
+                if ticker not in seen_tickers:
+                    seen_tickers[ticker] = rec
+                elif rec.get("suggested_value", 0) > seen_tickers[ticker].get("suggested_value", 0):
+                    seen_tickers[ticker] = rec
+            else:
+                deduped.append(rec)
+        deduped.extend(seen_tickers.values())
+        recommendations = deduped
+        save_recommendations(conn, recommendations)
+        results["recommendations"] = recommendations
+
+        log.info(f"Generated {len(recommendations)} recommendations:")
+        for rec in recommendations:
+            action = rec["action"]
+            ticker = rec["ticker"]
+            if action == "BUY":
+                log.info(f"  {action:6s} {ticker:6s} "
+                         f"{rec.get('suggested_shares', 0)} shares @ "
+                         f"${rec.get('current_price', 0):.2f} = "
+                         f"${rec.get('suggested_value', 0):.2f} "
+                         f"({rec.get('type', 'stock')})")
+            elif action in ("SELL", "REVIEW"):
+                log.info(f"  {action:6s} {ticker:6s} — {rec.get('rationale', '')}")
+            else:
+                log.info(f"  {action:6s} {ticker:6s}")
+
+    # ── Step 4: Execute (if not dry run and in entry window) ──────────────────
+        if not dry_run and (is_entry_window() or True):  # remove 'or True' for live
+            entries = execute_recommendations(
+                conn, recommendations, dry_run=False
+            )
+            results["entries"] = entries
+
+    # ── Step 5: Snapshot ──────────────────────────────────────────────────────
+    snap = take_snapshot(conn)
+    log.info(f"Portfolio snapshot: ${snap['total']:,.2f} "
+             f"({snap['return_pct']:+.2f}%)")
+
+    conn.close()
+    log.info("═══ Portfolio cycle complete ═══")
+    return results
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--execute", action="store_true",
+                        help="Execute trades (default: dry run)")
+    args = parser.parse_args()
+
+    results = run_portfolio_cycle(dry_run=not args.execute)
+
+    print("\n─── Summary ───")
+    print(f"Exits:           {len(results['exits'])}")
+    print(f"Recommendations: {len(results['recommendations'])}")
+    print(f"Entries:         {len(results['entries'])}")
+
+    if results["recommendations"]:
+        print("\nRecommendations:")
+        for rec in results["recommendations"]:
+            action = rec["action"]
+            ticker = rec["ticker"]
+            if action == "BUY":
+                print(f"  {action:6s} {ticker:6s} "
+                      f"{rec.get('suggested_shares',0)} shares @ "
+                      f"${rec.get('current_price',0):.2f} "
+                      f"= ${rec.get('suggested_value',0):.2f} "
+                      f"[{rec.get('type','stock')}]")
+            else:
+                print(f"  {action:6s} {ticker:6s} — {rec.get('rationale','')[:60]}")
