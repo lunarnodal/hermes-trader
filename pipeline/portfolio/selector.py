@@ -170,6 +170,54 @@ MIN_STOCK_PRICE = 5.00
 MAX_STOCK_PRICE = 5000.00  # Avoid Berkshire A class etc
 
 
+def get_primary_sector(ticker: str) -> str | None:
+    """Get primary sector for a ticker from our DB"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect("/home/trading/trading-ai/data/tickers.db")
+        row  = conn.execute(
+            "SELECT sector FROM tickers WHERE ticker = ?", (ticker,)
+        ).fetchone()
+        conn.close()
+        return row[0].lower().replace(" ", "_") if row and row[0] else None
+    except:
+        return None
+
+
+# Sector compatibility map — which DB sectors are compatible with prediction sectors
+SECTOR_COMPATIBILITY = {
+    "energy":        ["energy", "utilities", "oil_gas", "industrials",
+                      "basic_materials", "materials"],
+    "technology":    ["technology", "communications", "semiconductors",
+                      "consumer_electronics", "software", "hardware"],
+    "financials":    ["financials", "financial_services", "banks",
+                      "insurance", "real_estate"],
+    "healthcare":    ["healthcare", "pharmaceuticals", "biotechnology",
+                      "medical_devices"],
+    "defense":       ["industrials", "defense", "aerospace"],
+    "utilities":     ["utilities", "energy"],
+    "consumer":      ["consumer_discretionary", "consumer_staples",
+                      "retail", "food"],
+    "industrials":   ["industrials", "manufacturing", "transportation"],
+    "materials":     ["basic_materials", "materials", "chemicals", "mining"],
+    "semiconductors": ["technology", "semiconductors"],
+    "ai_infrastructure": ["technology", "semiconductors", "communications"],
+}
+
+
+def is_sector_compatible(ticker: str, prediction_sector: str) -> bool:
+    """Check if ticker's primary sector is compatible with prediction sector"""
+    primary = get_primary_sector(ticker)
+    if not primary:
+        return True  # Unknown sector — allow through
+    compatible = SECTOR_COMPATIBILITY.get(prediction_sector, [prediction_sector])
+    # Check if any compatible sector is a substring of primary (handles variants)
+    for comp in compatible:
+        if comp in primary or primary in comp:
+            return True
+    return False
+
+
 def is_sp500_or_nasdaq(ticker: str) -> bool:
     """Check if ticker is in our known universe (NASDAQ API loaded tickers)"""
     try:
@@ -202,6 +250,9 @@ def select_stocks_for_sector(sector: str,
     scored = []
     for ticker in sector_tickers:
         if not is_sp500_or_nasdaq(ticker):
+            continue
+        if not is_sector_compatible(ticker, sector):
+            log.debug(f"  {ticker} skipped — sector mismatch")
             continue
         score_data = score_ticker(ticker, signals)
         meets_threshold = (
