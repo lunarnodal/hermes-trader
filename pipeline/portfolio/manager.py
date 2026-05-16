@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from portfolio.db import (
     init_db, get_cash_balance, get_open_positions, get_portfolio_value,
     get_sector_exposure, positions_this_week, open_position, close_position,
-    take_snapshot, calculate_position_size, CONFIG
+    partial_close_position, take_snapshot, calculate_position_size, CONFIG
 )
 from portfolio.selector import (
     get_recent_signals, generate_recommendations, fetch_current_price
@@ -83,15 +83,39 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
 
         pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"] * 100
 
-        if current_price >= pos["take_profit"]:
-            reason = f"take_profit (+{pnl_pct:.1f}%)"
-            log.info(f"TAKE PROFIT: {ticker} @ ${current_price:.2f} "
-                     f"(entry=${pos['entry_price']:.2f}, +{pnl_pct:.1f}%)")
-            if not dry_run:
-                result = close_position(conn, pos["id"], current_price, reason)
-                actions.append({"action": "SELL", "reason": "take_profit", **result})
+        # Check tiered profit taking
+        tiers_triggered = pos.get("tiers_triggered", 0)
+        for tier_idx, (gain_pct, fraction, stop_rule) in enumerate(CONFIG["profit_tiers"]):
+            if tier_idx < tiers_triggered:
+                continue  # Already triggered this tier
+            if pnl_pct >= gain_pct * 100:
+                new_stop = None
+                if stop_rule == "breakeven":
+                    new_stop = pos["entry_price"]
+                elif stop_rule == "previous_tier" and tier_idx > 0:
+                    prev_gain = CONFIG["profit_tiers"][tier_idx - 1][0]
+                    new_stop = round(pos["entry_price"] * (1 + prev_gain), 2)
+                reason = f"profit_tier_{tier_idx+1} (+{pnl_pct:.1f}%)"
+                log.info(f"PROFIT TIER {tier_idx+1}: {ticker} @ ${current_price:.2f} "
+                         f"sell {fraction:.0%} | stop→${new_stop or 0:.2f}")
+                if not dry_run:
+                    result = partial_close_position(
+                        conn, pos["id"], current_price,
+                        fraction, reason, new_stop
+                    )
+                    conn.execute(
+                        "UPDATE positions SET tiers_triggered = ? WHERE id = ?",
+                        (tier_idx + 1, pos["id"])
+                    )
+                    actions.append({
+                        "action": "PARTIAL_SELL",
+                        "reason": reason,
+                        "tier":   tier_idx + 1,
+                        **result
+                    })
+                break  # Only trigger one tier per cycle
 
-        elif current_price <= pos["stop_loss"]:
+        if current_price <= pos["stop_loss"]:
             reason = f"stop_loss ({pnl_pct:.1f}%)"
             log.info(f"STOP LOSS: {ticker} @ ${current_price:.2f} "
                      f"(entry=${pos['entry_price']:.2f}, {pnl_pct:.1f}%)")

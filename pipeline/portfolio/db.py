@@ -26,8 +26,7 @@ CONFIG = {
     "max_position_pct":     0.10,      # 10% max per position
     "min_cash_reserve_pct": 0.10,      # 10% minimum cash
     "max_sector_pct":       0.25,      # 25% max per sector
-    "take_profit_pct":      0.06,      # 6% take profit (midpoint of 5-7%)
-    "stop_loss_pct":        0.02,      # 2% stop loss
+    "stop_loss_pct":        0.02,      # 2% initial stop loss
     "min_hold_days":        3,         # minimum 3 trading days
     "max_hold_days":        5,         # re-evaluate after 5 trading days
     "max_new_positions_week": 2,       # max 2 new positions per week
@@ -43,6 +42,14 @@ CONFIG = {
         ("15:30", "16:00"),   # close window
     ],
     "timezone": "America/New_York",
+    # Tiered profit taking — sell fractions as price climbs
+    # Each tier: (gain_pct, sell_fraction, move_stop_to)
+    # move_stop_to: 'breakeven' | 'previous_tier' | float (pct gain)
+    "profit_tiers": [
+        (0.05, 0.33, "breakeven"),      # +5%:  sell 33%, stop → breakeven
+        (0.08, 0.33, "previous_tier"),  # +8%:  sell 33%, stop → +5%
+        (0.12, 1.00, "previous_tier"),  # +12%: sell remaining, stop → +8%
+    ],
 }
 
 
@@ -82,6 +89,7 @@ def init_db() -> sqlite3.Connection:
             pnl              REAL,
             pnl_pct          REAL,
             hold_days        INTEGER DEFAULT 0,
+            tiers_triggered  INTEGER DEFAULT 0,
             notes            TEXT
         );
 
@@ -172,7 +180,7 @@ def update_cash(conn: sqlite3.Connection, amount: float,
 def get_open_positions(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("""
         SELECT id, ticker, sector, shares, entry_price, entry_date,
-               current_price, stop_loss, take_profit, hold_days, notes
+               current_price, stop_loss, take_profit, hold_days, tiers_triggered, notes
         FROM positions WHERE status = 'open'
         ORDER BY entry_date ASC
     """).fetchall()
@@ -188,7 +196,8 @@ def get_open_positions(conn: sqlite3.Connection) -> list[dict]:
             "stop_loss":     row[7],
             "take_profit":   row[8],
             "hold_days":     row[9],
-            "notes":         row[10],
+            "tiers_triggered": row[10],
+            "notes":         row[11],
             "cost_basis":    round(row[3] * row[4], 2),
             "current_value": round(row[3] * (row[6] or row[4]), 2),
             "unrealized_pnl": round(row[3] * ((row[6] or row[4]) - row[4]), 2),
@@ -260,7 +269,7 @@ def calculate_position_size(confidence: float,
         "value":        round(actual_value, 2),
         "position_pct": round(actual_value / portfolio_value * 100, 1),
         "stop_loss":    round(current_price * (1 - CONFIG["stop_loss_pct"]), 2),
-        "take_profit":  round(current_price * (1 + CONFIG["take_profit_pct"]), 2),
+        "take_profit":  round(current_price * (1 + CONFIG["profit_tiers"][0][0]), 2),
     }
 
 
@@ -279,7 +288,7 @@ def open_position(conn: sqlite3.Connection, ticker: str, sector: str,
         return -1
 
     stop_loss   = round(entry_price * (1 - CONFIG["stop_loss_pct"]), 2)
-    take_profit = round(entry_price * (1 + CONFIG["take_profit_pct"]), 2)
+    take_profit = round(entry_price * (1 + CONFIG["profit_tiers"][0][0]), 2)
 
     cursor = conn.execute("""
         INSERT INTO positions
@@ -355,6 +364,87 @@ def close_position(conn: sqlite3.Connection, position_id: int,
         "pnl_pct":  round(pnl_pct, 2),
         "reason":   reason,
         "outcome":  outcome
+    }
+
+
+def partial_close_position(conn: sqlite3.Connection,
+                           position_id: int,
+                           exit_price: float,
+                           fraction: float,
+                           reason: str,
+                           new_stop_loss: float = None) -> dict:
+    """
+    Partially close a position — sell a fraction of shares
+    Optionally move stop loss up to lock in gains
+    """
+    pos = conn.execute("""
+        SELECT ticker, shares, entry_price, sector, stop_loss
+        FROM positions WHERE id = ? AND status = 'open'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Position #{position_id} not found or already closed")
+        return {}
+
+    ticker, total_shares, entry_price, sector, current_stop = pos
+    now         = datetime.now(timezone.utc).isoformat()
+    shares_sell = max(1, int(total_shares * fraction))
+    shares_keep = total_shares - shares_sell
+    value       = shares_sell * exit_price
+    pnl         = (exit_price - entry_price) * shares_sell
+    pnl_pct     = (exit_price - entry_price) / entry_price * 100
+    cash        = get_cash_balance(conn)
+
+    # Update position — reduce shares, optionally move stop loss
+    if shares_keep > 0:
+        update_sql = "UPDATE positions SET shares = ?"
+        params     = [shares_keep]
+        if new_stop_loss:
+            update_sql += ", stop_loss = ?"
+            params.append(new_stop_loss)
+            log.info(f"Stop loss moved: ${current_stop:.2f} → ${new_stop_loss:.2f}")
+        update_sql += " WHERE id = ?"
+        params.append(position_id)
+        conn.execute(update_sql, params)
+    else:
+        # All shares sold — close position fully
+        conn.execute("""
+            UPDATE positions
+            SET status='closed', exit_price=?, exit_date=?,
+                exit_reason=?, pnl=?, pnl_pct=?, shares=0
+            WHERE id=?
+        """, (exit_price, now, reason,
+              round((exit_price - entry_price) * total_shares, 2),
+              round(pnl_pct, 2), position_id))
+
+    # Record cash and transaction
+    new_cash = update_cash(conn, value,
+                           f"PARTIAL SELL {shares_sell}/{total_shares} "
+                           f"{ticker} @ ${exit_price} ({reason})")
+    conn.execute("""
+        INSERT INTO transactions
+        (timestamp, ticker, action, shares, price, value,
+         position_id, reason, cash_before, cash_after)
+        VALUES (?, ?, 'PARTIAL_SELL', ?, ?, ?, ?, ?, ?, ?)
+    """, (now, ticker, shares_sell, exit_price, value,
+          position_id, reason, cash, new_cash))
+
+    conn.commit()
+
+    log.info(f"PARTIAL CLOSE: sold {shares_sell}/{total_shares} {ticker} "
+             f"@ ${exit_price:.2f} P&L=${pnl:+.2f} ({pnl_pct:+.1f}%) "
+             f"| {shares_keep} shares remain")
+
+    return {
+        "ticker":        ticker,
+        "shares_sold":   shares_sell,
+        "shares_remain": shares_keep,
+        "entry":         entry_price,
+        "exit":          exit_price,
+        "pnl":           round(pnl, 2),
+        "pnl_pct":       round(pnl_pct, 2),
+        "new_stop":      new_stop_loss,
+        "reason":        reason,
     }
 
 
