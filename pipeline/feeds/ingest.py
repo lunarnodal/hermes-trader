@@ -36,11 +36,19 @@ log = logging.getLogger(__name__)
 # ─── Feed Sources ─────────────────────────────────────────────────────────────
 
 FEEDS = [
+    # US Markets
     {"name": "marketwatch-top",      "url": "https://www.marketwatch.com/rss/topstories"},
     {"name": "marketwatch-bulletins","url": "https://feeds.content.dowjones.io/public/rss/mw_bulletins"},
     {"name": "wsj-markets",          "url": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"},
+    {"name": "wsj-business",         "url": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml"},
+    {"name": "wsj-tech",             "url": "https://feeds.a.dj.com/rss/RSSWSJD.xml"},
+    # Premium wire
+    {"name": "bloomberg-markets",    "url": "https://feeds.bloomberg.com/markets/news.rss"},
+    # Analysis
     {"name": "seeking-alpha",        "url": "https://seekingalpha.com/feed.xml"},
+    # International
     {"name": "ft-markets",           "url": "https://www.ft.com/rss/home/uk"},
+    {"name": "wsj-world",            "url": "https://feeds.a.dj.com/rss/RSSWorldNews.xml"},
     {"name": "investing-com",        "url": "https://www.investing.com/rss/news.rss"},
     {"name": "bbc-business",         "url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
 ]
@@ -203,6 +211,16 @@ def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
             if is_duplicate(conn, guid):
                 continue
 
+            # Extract tickers from Bloomberg category tags (NYS:BLK, NMS:NVDA etc)
+            bloomberg_tickers = []
+            if feed.get("name", name) == "bloomberg-markets":
+                for tag in item.get("tags", []):
+                    term = tag.get("term", "")
+                    if ":" in term:
+                        ticker = term.split(":")[-1].strip().upper()
+                        if 1 <= len(ticker) <= 5 and ticker.isalpha():
+                            bloomberg_tickers.append(ticker)
+
             article = {
                 "guid":      guid,
                 "source":    name,
@@ -210,6 +228,7 @@ def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
                 "url":       url_entry,
                 "summary":   summary[:500] if summary else "",
                 "published": pub_dt.isoformat() if pub_dt else None,
+                "bloomberg_tickers": bloomberg_tickers if bloomberg_tickers else None,
             }
 
             mark_ingested(conn, guid, name, title, url_entry,
