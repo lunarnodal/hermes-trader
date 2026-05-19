@@ -35,8 +35,9 @@ CONFIG = {
     },
     "min_hold_before_stop_days": 1,  # Don't stop out same day as entry
     "min_hold_days":        3,         # minimum 3 trading days
-    "max_hold_days":        5,         # re-evaluate after 5 trading days
-    "max_new_positions_week": 2,       # max 2 new positions per week
+    "max_hold_days":        10,        # re-evaluate after 10 trading days
+    "max_new_positions_week": 10,      # max 10 new positions per week (PDT only triggers on same-day round trips)
+    "max_open_positions":   8,         # max 8 simultaneous open positions
     "confidence_tiers": {
         "low":    (0.60, 0.70, 0.04),  # conf range → position % (midpoint)
         "medium": (0.70, 0.80, 0.06),

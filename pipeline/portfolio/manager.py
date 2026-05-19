@@ -192,6 +192,12 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — weekly limit reached ({week_buys} trades)")
             continue
 
+        # Check max concurrent open positions
+        open_count = len(get_open_positions(conn))
+        if open_count >= CONFIG.get("max_open_positions", 8):
+            log.info(f"SKIP {ticker} — max open positions reached ({open_count})")
+            continue
+
         # Check sector concentration
         current_sector_pct = sector_exp.get(sector, 0)
         if current_sector_pct >= CONFIG["max_sector_pct"] * 100:
