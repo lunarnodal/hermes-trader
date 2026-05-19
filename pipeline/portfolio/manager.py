@@ -83,6 +83,14 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
 
         pnl_pct = (current_price - pos["entry_price"]) / pos["entry_price"] * 100
 
+        # Check minimum hold period before allowing stop loss
+        entry_date = datetime.fromisoformat(pos["entry_date"].replace("Z", "+00:00"))
+        hold_hours = (datetime.now(timezone.utc) - entry_date).total_seconds() / 3600
+        min_hold_hours = CONFIG.get("min_hold_before_stop_days", 1) * 6.5  # trading hours
+        if hold_hours < min_hold_hours:
+            log.debug(f"  {ticker} held {hold_hours:.1f}h — min hold not reached, skip stop check")
+            continue
+
         # Check tiered profit taking
         tiers_triggered = pos.get("tiers_triggered", 0)
         for tier_idx, (gain_pct, fraction, stop_rule) in enumerate(CONFIG["profit_tiers"]):

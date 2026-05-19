@@ -26,7 +26,14 @@ CONFIG = {
     "max_position_pct":     0.10,      # 10% max per position
     "min_cash_reserve_pct": 0.10,      # 10% minimum cash
     "max_sector_pct":       0.25,      # 25% max per sector
-    "stop_loss_pct":        0.02,      # 2% initial stop loss
+    "stop_loss_pct":        0.02,      # 2% default stop loss (ETFs)
+    "stop_loss_by_type": {
+        "etf":       0.02,   # 2% — diversified, lower vol
+        "large_cap": 0.03,   # 3% — S&P 500 components
+        "stock":     0.04,   # 4% — individual stocks default
+        "small_cap": 0.05,   # 5% — higher volatility
+    },
+    "min_hold_before_stop_days": 1,  # Don't stop out same day as entry
     "min_hold_days":        3,         # minimum 3 trading days
     "max_hold_days":        5,         # re-evaluate after 5 trading days
     "max_new_positions_week": 2,       # max 2 new positions per week
@@ -287,7 +294,16 @@ def open_position(conn: sqlite3.Connection, ticker: str, sector: str,
         log.warning(f"Insufficient cash: need ${value:.2f}, have ${cash:.2f}")
         return -1
 
-    stop_loss   = round(entry_price * (1 - CONFIG["stop_loss_pct"]), 2)
+    # Use tiered stop loss based on position type
+    # Determine type from ticker — ETFs are known symbols
+    ETF_TICKERS = {"SPY","QQQ","XLE","XLK","XLF","XLV","XLU","XLI","XLB",
+                   "XLP","XLY","ITA","VNQ","SOXX","AIQ","XOP","MOO","DJP"}
+    if ticker.upper() in ETF_TICKERS:
+        sl_pct = CONFIG["stop_loss_by_type"]["etf"]
+    else:
+        sl_pct = CONFIG["stop_loss_by_type"]["stock"]
+
+    stop_loss   = round(entry_price * (1 - sl_pct), 2)
     take_profit = round(entry_price * (1 + CONFIG["profit_tiers"][0][0]), 2)
 
     cursor = conn.execute("""
