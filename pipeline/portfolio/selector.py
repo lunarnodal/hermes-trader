@@ -392,7 +392,7 @@ def generate_recommendations(predictions: list[dict],
         ticker  = pos["ticker"]
         pnl_pct = pos["unrealized_pct"]
 
-        if pnl_pct >= CONFIG["take_profit_pct"] * 100:
+        if pnl_pct >= CONFIG["profit_tiers"][0][0] * 100:
             recommendations.append({
                 "ticker":  ticker,
                 "action":  "SELL",
