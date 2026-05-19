@@ -53,7 +53,7 @@ DAILY_QUERIES = [
     {
         "query":     "Overall market outlook — S&P 500, macro environment, geopolitical risks",
         "timeframe": "24h",
-        "limit":     20,
+        "limit":     12,
         "label":     "market_overview"
     },
 ]
