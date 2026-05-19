@@ -166,15 +166,15 @@ def get_expired_unverified(conn: sqlite3.Connection) -> list[dict]:
         expires = created + timedelta(hours=hours)
 
         if now >= expires:
-            # Only verify during market hours (Mon-Fri 9:30-16:00 ET)
+            # Verify if market has opened at least once since prediction expired
+            # i.e. it's a weekday AND market has opened today (past 9:30 ET)
             now_et = now.astimezone(ET)
             is_weekday = now_et.weekday() < 5
-            market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
-            market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
-            is_market_hours = market_open <= now_et <= market_close
+            market_open_today = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_has_opened = now_et >= market_open_today
 
-            if not is_weekday or not is_market_hours:
-                log.info(f"Prediction #{pred_id} expired but market closed — "
+            if not is_weekday or not market_has_opened:
+                log.info(f"Prediction #{pred_id} expired but market not yet open — "
                          f"deferring to next market session")
                 continue
 

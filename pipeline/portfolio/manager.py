@@ -313,7 +313,7 @@ def run_portfolio_cycle(dry_run: bool = True) -> dict:
             FROM predictions
             WHERE created_at >= ?
             ORDER BY created_at DESC LIMIT 10
-        """, ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(),)
+        """, ((datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),)
         ).fetchall()
         paper_conn.close()
 
