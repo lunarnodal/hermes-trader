@@ -405,13 +405,26 @@ def run_portfolio_cycle(dry_run: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    import argparse
+    import argparse, fcntl
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true",
                         help="Execute trades (default: dry run)")
     args = parser.parse_args()
 
-    results = run_portfolio_cycle(dry_run=not args.execute)
+    # Prevent simultaneous runs
+    lockfile = open("/tmp/trading-portfolio.lock", "w")
+    try:
+        fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("Portfolio manager already running — exiting")
+        raise SystemExit(0)
+
+    try:
+        results = run_portfolio_cycle(dry_run=not args.execute)
+    finally:
+        fcntl.flock(lockfile, fcntl.LOCK_UN)
+        lockfile.close()
 
     print("\n─── Summary ───")
     print(f"Exits:           {len(results['exits'])}")
