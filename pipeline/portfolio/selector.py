@@ -387,7 +387,6 @@ def generate_recommendations(predictions: list[dict],
                         log.info(f"SKIP {ticker} — re-entry requires {required_conf:.0%} confidence "
                                  f"(have {stock['avg_conf']:.0%})")
                         continue
-                continue
 
             # Calculate position size
             sizing = calculate_position_size(
