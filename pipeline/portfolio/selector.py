@@ -362,11 +362,16 @@ def generate_recommendations(predictions: list[dict],
                 })
                 continue
 
-            # Check re-entry eligibility based on exit history
+            # Check re-entry eligibility — only applies to previously closed positions
             if conn is None:
-                reentry = {"eligible": True, "min_signals": 2, "min_confidence": 0.60}
+                reentry = {"eligible": True, "min_signals": 2, "min_confidence": 0.60,
+                           "reason": "no db connection"}
             else:
                 reentry = get_reentry_status(conn, ticker)
+                # If no prior position, use normal thresholds (not re-entry rules)
+                if reentry.get("reason") == "no prior position":
+                    reentry = {"eligible": True, "min_signals": 2,
+                               "min_confidence": 0.60, "reason": "first time entry"}
             if not reentry["eligible"]:
                 log.info(f"SKIP {ticker} — {reentry['reason']}")
                 continue
@@ -429,7 +434,7 @@ def generate_recommendations(predictions: list[dict],
                 "ticker":  ticker,
                 "action":  "SELL",
                 "sector":  pos.get("sector", ""),
-                "rationale": f"Stop loss: {pnl_pct:.1f}% (limit: -{CONFIG['stop_loss_pct']*100:.0f}%)",
+                "rationale": f"Stop loss: {pnl_pct:.1f}% (stop at ${pos['stop_loss']:.2f})",
                 "suggested_shares": pos["shares"],
                 "suggested_value":  pos["current_value"],
                 "exit_reason": "stop_loss",
