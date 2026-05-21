@@ -312,11 +312,12 @@ def generate_recommendations(predictions: list[dict],
                               signals: list[dict],
                               open_positions: list[dict],
                               cash: float,
-                              portfolio_value: float) -> list[dict]:
+                              portfolio_value: float,
+                              conn=None) -> list[dict]:
     """
     Generate buy/hold/sell recommendations from predictions + signals
     """
-    from portfolio.db import CONFIG, calculate_position_size
+    from portfolio.db import CONFIG, calculate_position_size, get_reentry_status
 
     recommendations = []
     open_tickers    = {p["ticker"] for p in open_positions}
@@ -359,6 +360,27 @@ def generate_recommendations(predictions: list[dict],
                     "suggested_shares": 0,
                     "suggested_value":  0,
                 })
+                continue
+
+            # Check re-entry eligibility based on exit history
+            if conn is None:
+                reentry = {"eligible": True, "min_signals": 2, "min_confidence": 0.60}
+            else:
+                reentry = get_reentry_status(conn, ticker)
+            if not reentry["eligible"]:
+                log.info(f"SKIP {ticker} — {reentry['reason']}")
+                continue
+
+            # Apply stricter thresholds if required by re-entry rules
+            required_signals = reentry.get("min_signals", 2)
+            required_conf    = reentry.get("min_confidence", 0.60)
+            if stock["signal_count"] < required_signals:
+                log.info(f"SKIP {ticker} — re-entry requires {required_signals} signals "
+                         f"(have {stock['signal_count']})")
+                continue
+            if stock["avg_conf"] < required_conf:
+                log.info(f"SKIP {ticker} — re-entry requires {required_conf:.0%} confidence "
+                         f"(have {stock['avg_conf']:.0%})")
                 continue
 
             # Calculate position size

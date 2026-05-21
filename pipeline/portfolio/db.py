@@ -38,6 +38,23 @@ CONFIG = {
     "max_hold_days":        10,        # re-evaluate after 10 trading days
     "max_new_positions_week": 10,      # max 10 new positions per week (PDT only triggers on same-day round trips)
     "max_open_positions":   8,         # max 8 simultaneous open positions
+    "reentry_rules": {
+        "stop_loss": {
+            "cooldown_days":     2,     # 2 trading days before re-entry allowed
+            "min_signals":       3,     # stronger signal requirement
+            "min_confidence":    0.80,  # higher confidence required
+        },
+        "time_exit": {
+            "cooldown_days":     1,     # 1 trading day cooldown
+            "min_signals":       2,     # normal signal requirement
+            "min_confidence":    0.60,  # normal confidence
+        },
+        "take_profit": {
+            "cooldown_days":     0,     # no cooldown — trend continuation fine
+            "min_signals":       2,     # normal signal requirement
+            "min_confidence":    0.60,  # normal confidence
+        },
+    }
     "confidence_tiers": {
         "low":    (0.60, 0.70, 0.04),  # conf range → position % (midpoint)
         "medium": (0.70, 0.80, 0.06),
@@ -466,6 +483,75 @@ def partial_close_position(conn: sqlite3.Connection,
 
 
 # ─── Snapshot ─────────────────────────────────────────────────────────────────
+
+def get_reentry_status(conn: sqlite3.Connection,
+                       ticker: str) -> dict:
+    """
+    Check if a ticker is eligible for re-entry based on exit history.
+    Returns dict with eligible bool and any modified thresholds.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    # Find most recent closed position for this ticker
+    row = conn.execute("""
+        SELECT exit_reason, exit_date, pnl_pct
+        FROM positions
+        WHERE ticker = ? AND status = 'closed'
+        ORDER BY exit_date DESC LIMIT 1
+    """, (ticker,)).fetchone()
+
+    # No history — normal entry criteria
+    if not row:
+        return {"eligible": True, "min_signals": 2, "min_confidence": 0.60,
+                "reason": "no prior position"}
+
+    exit_reason, exit_date, pnl_pct = row
+
+    # Parse exit date
+    try:
+        exited = datetime.fromisoformat(exit_date.replace("Z", "+00:00"))
+    except:
+        return {"eligible": True, "min_signals": 2, "min_confidence": 0.60,
+                "reason": "could not parse exit date"}
+
+    now = datetime.now(timezone.utc)
+    days_since_exit = (now - exited).total_seconds() / 86400
+
+    # Determine which rule applies
+    rules = CONFIG["reentry_rules"]
+    if "stop_loss" in (exit_reason or ""):
+        rule = rules["stop_loss"]
+        rule_name = "stop_loss"
+    elif "time_exit" in (exit_reason or ""):
+        rule = rules["time_exit"]
+        rule_name = "time_exit"
+    else:
+        rule = rules["take_profit"]
+        rule_name = "take_profit"
+
+    cooldown = rule["cooldown_days"]
+
+    # Check cooldown
+    if days_since_exit < cooldown:
+        days_remaining = cooldown - days_since_exit
+        return {
+            "eligible":       False,
+            "min_signals":    rule["min_signals"],
+            "min_confidence": rule["min_confidence"],
+            "reason":         f"{rule_name} cooldown — {days_remaining:.1f} days remaining",
+            "exit_reason":    exit_reason,
+            "pnl_pct":        pnl_pct,
+        }
+
+    return {
+        "eligible":       True,
+        "min_signals":    rule["min_signals"],
+        "min_confidence": rule["min_confidence"],
+        "reason":         f"{rule_name} exit {days_since_exit:.1f} days ago — eligible",
+        "exit_reason":    exit_reason,
+        "pnl_pct":        pnl_pct,
+    }
+
 
 def take_snapshot(conn: sqlite3.Connection) -> dict:
     cash       = get_cash_balance(conn)

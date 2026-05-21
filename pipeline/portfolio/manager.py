@@ -352,7 +352,7 @@ def run_portfolio_cycle(dry_run: bool = True) -> dict:
     # ── Step 3: Generate recommendations ─────────────────────────────────────
     if predictions:
         recommendations = generate_recommendations(
-            predictions, signals, positions, cash, port_val
+            predictions, signals, positions, cash, port_val, conn
         )
         # Deduplicate — keep highest-value BUY per ticker
         seen_tickers = {}
