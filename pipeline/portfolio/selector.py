@@ -234,7 +234,8 @@ def is_sp500_or_nasdaq(ticker: str) -> bool:
 
 def select_stocks_for_sector(sector: str,
                               prediction_confidence: float,
-                              signals: list[dict]) -> list[dict]:
+                              signals: list[dict],
+                              exclude_tickers: set = None) -> list[dict]:
     """
     Option C implementation:
     - 2+ bullish signals on specific ticker → recommend that stock
@@ -266,6 +267,10 @@ def select_stocks_for_sector(sector: str,
 
     # Sort by composite score
     scored.sort(key=lambda x: x["score"], reverse=True)
+
+    # Remove already-held tickers so both slots go to new positions
+    if exclude_tickers:
+        scored = [s for s in scored if s["ticker"] not in exclude_tickers]
 
     if scored:
         # Individual stocks — top 2 ranked
@@ -343,7 +348,8 @@ def generate_recommendations(predictions: list[dict],
                 break
 
         # Get stock recommendations for this sector
-        stocks = select_stocks_for_sector(sector, confidence, signals)
+        stocks = select_stocks_for_sector(sector, confidence, signals,
+                                              exclude_tickers=open_tickers)
 
         for stock in stocks:
             ticker = stock["ticker"]
@@ -363,29 +369,24 @@ def generate_recommendations(predictions: list[dict],
                 continue
 
             # Check re-entry eligibility — only applies to previously closed positions
-            if conn is None:
-                reentry = {"eligible": True, "min_signals": 2, "min_confidence": 0.60,
-                           "reason": "no db connection"}
-            else:
+            if conn is not None:
                 reentry = get_reentry_status(conn, ticker)
-                # If no prior position, use normal thresholds (not re-entry rules)
-                if reentry.get("reason") == "no prior position":
-                    reentry = {"eligible": True, "min_signals": 2,
-                               "min_confidence": 0.60, "reason": "first time entry"}
-            if not reentry["eligible"]:
-                log.info(f"SKIP {ticker} — {reentry['reason']}")
-                continue
-
-            # Apply stricter thresholds if required by re-entry rules
-            required_signals = reentry.get("min_signals", 2)
-            required_conf    = reentry.get("min_confidence", 0.60)
-            if stock["signal_count"] < required_signals:
-                log.info(f"SKIP {ticker} — re-entry requires {required_signals} signals "
-                         f"(have {stock['signal_count']})")
-                continue
-            if stock["avg_conf"] < required_conf:
-                log.info(f"SKIP {ticker} — re-entry requires {required_conf:.0%} confidence "
-                         f"(have {stock['avg_conf']:.0%})")
+                # Only restrict if there IS a prior closed position
+                if reentry.get("reason") != "no prior position":
+                    if not reentry["eligible"]:
+                        log.info(f"SKIP {ticker} — {reentry['reason']}")
+                        continue
+                    # Stricter thresholds for re-entry after stop loss
+                    required_signals = reentry.get("min_signals", 2)
+                    required_conf    = reentry.get("min_confidence", 0.60)
+                    if stock["signal_count"] < required_signals:
+                        log.info(f"SKIP {ticker} — re-entry requires {required_signals} signals "
+                                 f"(have {stock['signal_count']})")
+                        continue
+                    if stock["avg_conf"] < required_conf:
+                        log.info(f"SKIP {ticker} — re-entry requires {required_conf:.0%} confidence "
+                                 f"(have {stock['avg_conf']:.0%})")
+                        continue
                 continue
 
             # Calculate position size
