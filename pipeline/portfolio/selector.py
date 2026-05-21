@@ -429,7 +429,7 @@ def generate_recommendations(predictions: list[dict],
                 "suggested_value":  pos["current_value"],
                 "exit_reason": "take_profit",
             })
-        elif pnl_pct <= -CONFIG["stop_loss_pct"] * 100:
+        elif pos.get("current_price", pos["entry_price"]) <= pos["stop_loss"]:
             recommendations.append({
                 "ticker":  ticker,
                 "action":  "SELL",
