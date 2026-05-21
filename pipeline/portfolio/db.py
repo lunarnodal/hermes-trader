@@ -54,7 +54,7 @@ CONFIG = {
             "min_signals":       2,     # normal signal requirement
             "min_confidence":    0.60,  # normal confidence
         },
-    }
+    },
     "confidence_tiers": {
         "low":    (0.60, 0.70, 0.04),  # conf range → position % (midpoint)
         "medium": (0.70, 0.80, 0.06),
