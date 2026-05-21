@@ -91,20 +91,31 @@ def discover_rules_via_llm(signals: list[dict],
     log.info(f"Sending {len(signal_lines)} signals to DeepSeek for rule discovery")
 
     try:
-        resp = requests.post(
-            f"{SPARK_OLLAMA_HOST}/api/chat",
-            json={
-                "model": DISCOVERY_MODEL,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 4096},
-                "messages": [
-                    {"role": "system", "content": DISCOVERY_PROMPT},
-                    {"role": "user",   "content": user_msg}
-                ]
-            },
-            timeout=600
-        )
-        resp.raise_for_status()
+        # Retry up to 3 times on 500 errors (Spark may still be initializing)
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = requests.post(
+                    f"{SPARK_OLLAMA_HOST}/api/chat",
+                    json={
+                        "model": DISCOVERY_MODEL,
+                        "stream": False,
+                        "options": {"temperature": 0.1, "num_predict": 4096},
+                        "messages": [
+                            {"role": "system", "content": DISCOVERY_PROMPT},
+                            {"role": "user",   "content": user_msg}
+                        ]
+                    },
+                    timeout=600
+                )
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                if attempt < 2:
+                    log.warning(f"Attempt {attempt+1} failed: {e} — retrying in 30s")
+                    import time; time.sleep(30)
+                else:
+                    raise
         raw     = resp.json()
         content = raw["message"]["content"].strip()
         thinking = raw["message"].get("thinking", "")
