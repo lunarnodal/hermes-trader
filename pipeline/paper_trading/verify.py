@@ -14,7 +14,6 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
-ET = ZoneInfo("America/New_York")
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -167,11 +166,11 @@ def get_expired_unverified(conn: sqlite3.Connection) -> list[dict]:
 
         if now >= expires:
             # Verify if market has opened at least once since prediction expired
-            # i.e. it's a weekday AND market has opened today (past 9:30 ET)
-            now_et = now.astimezone(ET)
-            is_weekday = now_et.weekday() < 5
-            market_open_today = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-            market_has_opened = now_et >= market_open_today
+            # Server is now America/New_York so datetime.now() is ET directly
+            now_local = datetime.now()
+            is_weekday = now_local.weekday() < 5
+            market_open_today = now_local.replace(hour=9, minute=30, second=0, microsecond=0)
+            market_has_opened = now_local >= market_open_today
 
             if not is_weekday or not market_has_opened:
                 log.info(f"Prediction #{pred_id} expired but market not yet open — "

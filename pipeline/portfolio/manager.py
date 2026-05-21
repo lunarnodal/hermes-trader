@@ -12,7 +12,6 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -37,30 +36,26 @@ logging.basicConfig(
     ]
 )
 
-ET = ZoneInfo("America/New_York")
-
-
 def is_market_hours() -> bool:
-    """Check if currently within US market hours"""
-    now_et = datetime.now(ET)
-    # Skip weekends
-    if now_et.weekday() >= 5:
+    """Check if currently within US market hours (server is America/New_York)"""
+    now = datetime.now()
+    if now.weekday() >= 5:  # Skip weekends
         return False
-    market_open  = now_et.replace(hour=9,  minute=30, second=0)
-    market_close = now_et.replace(hour=16, minute=0,  second=0)
-    return market_open <= now_et <= market_close
+    market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
+    return market_open <= now <= market_close
 
 
 def is_entry_window() -> bool:
     """Check if within preferred entry windows (morning or close)"""
-    now_et = datetime.now(ET)
-    if now_et.weekday() >= 5:
+    now = datetime.now()
+    if now.weekday() >= 5:
         return False
     windows = [
-        (now_et.replace(hour=9,  minute=30), now_et.replace(hour=10, minute=0)),
-        (now_et.replace(hour=15, minute=30), now_et.replace(hour=16, minute=0)),
+        (now.replace(hour=9,  minute=30), now.replace(hour=10, minute=0)),
+        (now.replace(hour=15, minute=30), now.replace(hour=16, minute=0)),
     ]
-    return any(start <= now_et <= end for start, end in windows)
+    return any(start <= now <= end for start, end in windows)
 
 
 def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:

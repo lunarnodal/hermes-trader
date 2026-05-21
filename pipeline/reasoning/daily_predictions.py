@@ -60,13 +60,11 @@ DAILY_QUERIES = [
 
 
 def run_daily_predictions() -> None:
-    from zoneinfo import ZoneInfo
-    ET = ZoneInfo("America/New_York")
-    now_et = datetime.now(ET)
-
     # Skip weekends — no point predicting on closed markets
-    if now_et.weekday() >= 5:
-        log.info(f"Skipping daily predictions — weekend ({now_et.strftime('%A')})")
+    # Server is America/New_York so datetime.now() is ET directly
+    now = datetime.now()
+    if now.weekday() >= 5:
+        log.info(f"Skipping daily predictions — weekend ({now.strftime('%A')})")
         return
 
     log.info("═══ Daily predictions starting ═══")
