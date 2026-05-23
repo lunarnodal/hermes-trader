@@ -407,19 +407,23 @@ if __name__ == "__main__":
                         help="Execute trades (default: dry run)")
     args = parser.parse_args()
 
-    # Prevent simultaneous runs
-    lockfile = open("/tmp/trading-portfolio.lock", "w")
-    try:
-        fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("Portfolio manager already running — exiting")
-        raise SystemExit(0)
+    # Prevent simultaneous runs using PID file
+    import os
+    pidfile = Path("/tmp/trading-portfolio.pid")
+    if pidfile.exists():
+        try:
+            pid = int(pidfile.read_text().strip())
+            os.kill(pid, 0)  # Check if process still running
+            print(f"Portfolio manager already running (PID {pid}) — exiting")
+            raise SystemExit(0)
+        except (ProcessLookupError, ValueError):
+            pass  # Process dead, stale pidfile — continue
 
+    pidfile.write_text(str(os.getpid()))
     try:
         results = run_portfolio_cycle(dry_run=not args.execute)
     finally:
-        fcntl.flock(lockfile, fcntl.LOCK_UN)
-        lockfile.close()
+        pidfile.unlink(missing_ok=True)
 
     print("\n─── Summary ───")
     print(f"Exits:           {len(results['exits'])}")
