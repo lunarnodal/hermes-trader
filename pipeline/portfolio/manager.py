@@ -400,7 +400,7 @@ def run_portfolio_cycle(dry_run: bool = True) -> dict:
 
 
 if __name__ == "__main__":
-    import argparse, fcntl
+    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true",
