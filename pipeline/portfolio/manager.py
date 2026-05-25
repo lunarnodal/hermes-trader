@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -36,10 +36,32 @@ logging.basicConfig(
     ]
 )
 
+# US Market holidays (update annually)
+MARKET_HOLIDAYS_2026 = {
+    date(2026, 1,  1),   # New Year's Day
+    date(2026, 1, 19),   # MLK Day
+    date(2026, 2, 16),   # Presidents Day
+    date(2026, 4,  3),   # Good Friday
+    date(2026, 5, 25),   # Memorial Day
+    date(2026, 7,  3),   # Independence Day (observed)
+    date(2026, 9,  7),   # Labor Day
+    date(2026, 11, 26),  # Thanksgiving
+    date(2026, 11, 27),  # Black Friday (early close — treat as holiday)
+    date(2026, 12, 25),  # Christmas
+}
+
+
+def is_market_holiday() -> bool:
+    """Check if today is a US market holiday"""
+    return date.today() in MARKET_HOLIDAYS_2026
+
+
 def is_market_hours() -> bool:
     """Check if currently within US market hours (server is America/New_York)"""
     now = datetime.now()
     if now.weekday() >= 5:  # Skip weekends
+        return False
+    if is_market_holiday():
         return False
     market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
     market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
