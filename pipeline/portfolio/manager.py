@@ -73,6 +73,8 @@ def is_entry_window() -> bool:
     now = datetime.now()
     if now.weekday() >= 5:
         return False
+    if is_market_holiday():
+        return False
     windows = [
         (now.replace(hour=9,  minute=30), now.replace(hour=10, minute=0)),
         (now.replace(hour=15, minute=30), now.replace(hour=16, minute=0)),
