@@ -83,32 +83,36 @@ def run_daily_predictions() -> None:
     results = []
     for q in DAILY_QUERIES:
         log.info(f"── Predicting: {q['label']} ──")
-        try:
-            result = run_prediction(
-                query=q["query"],
-                timeframe=q["timeframe"],
-                limit=q["limit"]
-            )
+        for attempt in range(3):
+            try:
+                result = run_prediction(
+                    query=q["query"],
+                    timeframe=q["timeframe"],
+                    limit=q["limit"]
+                )
 
-            if result.get("prediction"):
-                p = result["prediction"]
-                log.info(f"   {q['label']}: {p.get('direction')} "
-                         f"({p.get('probability', 0):.0%}) "
-                         f"conf={p.get('confidence', 0):.2f}")
-                save_and_record(result)
-                results.append({
-                    "label":     q["label"],
-                    "direction": p.get("direction"),
-                    "probability": p.get("probability"),
-                    "confidence": p.get("confidence"),
-                })
-            else:
-                log.warning(f"   {q['label']}: No structured prediction returned")
-
-        except Exception as e:
-            log.error(f"   {q['label']} failed: {e}")
-            continue
-
+                if result.get("prediction"):
+                    p = result["prediction"]
+                    log.info(f"   {q['label']}: {p.get('direction')} "
+                             f"({p.get('probability', 0):.0%}) "
+                             f"conf={p.get('confidence', 0):.2f}")
+                    save_and_record(result)
+                    results.append({
+                        "label":     q["label"],
+                        "direction": p.get("direction"),
+                        "probability": p.get("probability"),
+                        "confidence": p.get("confidence"),
+                    })
+                else:
+                    log.warning(f"   {q['label']}: No structured prediction returned")
+                break  # Success — exit retry loop
+            except Exception as e:
+                if attempt < 2:
+                    log.warning(f"   {q['label']} attempt {attempt+1} failed: {e} — retrying in 30s")
+                    import time
+                    time.sleep(30)
+                else:
+                    log.error(f"   {q['label']} failed after 3 attempts: {e}")
     # Daily summary
     log.info("═══ Daily predictions complete ═══")
     log.info(f"    Generated {len(results)}/{len(DAILY_QUERIES)} predictions")
