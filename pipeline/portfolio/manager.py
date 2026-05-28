@@ -215,6 +215,15 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — max open positions reached ({open_count})")
             continue
 
+        # Check per-sector position limit
+        sector_limits = CONFIG.get("max_positions_per_sector", {})
+        sector_limit = sector_limits.get(rec.get("sector", ""), sector_limits.get("default", 2))
+        sector_count = sum(1 for p in get_open_positions(conn)
+                          if p.get("sector") == rec.get("sector", ""))
+        if sector_count >= sector_limit:
+            log.info(f"SKIP {ticker} — {rec.get('sector')} sector at limit ({sector_count}/{sector_limit})")
+            continue
+
         # Check sector concentration
         current_sector_pct = sector_exp.get(sector, 0)
         if current_sector_pct >= CONFIG["max_sector_pct"] * 100:

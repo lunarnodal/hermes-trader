@@ -38,6 +38,14 @@ CONFIG = {
     "max_hold_days":        10,        # re-evaluate after 10 trading days
     "max_new_positions_week": 10,      # max 10 new positions per week (PDT only triggers on same-day round trips)
     "max_open_positions":   8,         # max 8 simultaneous open positions
+    "max_positions_per_sector": {
+        "technology":   3,
+        "healthcare":   2,
+        "energy":       2,
+        "financials":   2,
+        "macro":        1,
+        "default":      2,
+    },
     "reentry_rules": {
         "stop_loss": {
             "cooldown_days":     2,     # 2 trading days before re-entry allowed
