@@ -456,7 +456,7 @@ def generate_recommendations(predictions: list[dict],
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    logging.basicConfig(level=logging.INFO)
+    pass  # logging configured by entry point
 
     signals = get_recent_signals(48)
     print(f"Loaded {len(signals)} recent signals")

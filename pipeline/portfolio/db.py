@@ -579,7 +579,7 @@ def take_snapshot(conn: sqlite3.Connection) -> dict:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    pass  # logging configured by entry point
     conn = init_db()
     snap = take_snapshot(conn)
     print(f"\nPortfolio initialized:")

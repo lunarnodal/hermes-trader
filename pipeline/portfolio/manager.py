@@ -26,7 +26,6 @@ from portfolio.selector import (
     get_recent_signals, generate_recommendations, fetch_current_price
 )
 
-log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -35,7 +34,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
+log = logging.getLogger(__name__)
 # US Market holidays (update annually)
 MARKET_HOLIDAYS_2026 = {
     date(2026, 1,  1),   # New Year's Day
