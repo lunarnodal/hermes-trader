@@ -42,6 +42,25 @@ def run_pipeline() -> None:
             log.info(f"   Queue file: {queue_file.name}")
         else:
             log.info("   No new articles found")
+
+        # Finnhub + Marketaux supplemental feeds
+        try:
+            from feeds.finnhub_feed import run_finnhub_ingest
+            from feeds.marketaux_feed import run_marketaux_ingest
+            from feeds.ingest import DB_PATH, QUEUE_DIR
+            import sqlite3 as _sqlite3
+            from portfolio.db import init_db as _init_port, get_open_positions as _get_pos
+            _conn = _sqlite3.connect(DB_PATH)
+            _port = _init_port()
+            _held = [p["ticker"] for p in _get_pos(_port)]
+            _port.close()
+            _n1 = run_finnhub_ingest(_conn, QUEUE_DIR, held_tickers=_held)
+            _n2 = run_marketaux_ingest(_conn, QUEUE_DIR)
+            _conn.close()
+            if _n1 + _n2 > 0:
+                log.info(f"   Supplemental: +{_n1} Finnhub, +{_n2} Marketaux")
+        except Exception as _e:
+            log.warning(f"   Supplemental feeds (non-fatal): {_e}")
     except Exception as e:
         log.error(f"   Ingestion failed: {e}")
         return
