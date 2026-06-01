@@ -37,12 +37,15 @@ CONFIG = {
     "min_hold_days":        3,         # minimum 3 trading days
     "max_hold_days":        10,        # re-evaluate after 10 trading days
     "max_new_positions_week": 10,      # max 10 new positions per week (PDT only triggers on same-day round trips)
-    "max_open_positions":   8,         # max 8 simultaneous open positions
+    "max_open_positions":   12,        # max 12 simultaneous open positions
     "max_positions_per_sector": {
-        "technology":   3,
-        "healthcare":   2,
-        "energy":       2,
+        "technology":   4,
+        "healthcare":   3,
+        "energy":       3,
         "financials":   2,
+        "materials":    2,
+        "industrials":  2,
+        "consumer":     2,
         "macro":        1,
         "default":      2,
     },

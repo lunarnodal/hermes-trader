@@ -51,6 +51,24 @@ DAILY_QUERIES = [
         "label":     "healthcare"
     },
     {
+        "query":     "Materials and mining sector outlook — metals, chemicals, commodities",
+        "timeframe": "24h",
+        "limit":     12,
+        "label":     "materials"
+    },
+    {
+        "query":     "Industrials sector outlook — defense, aerospace, manufacturing, infrastructure",
+        "timeframe": "24h",
+        "limit":     12,
+        "label":     "industrials"
+    },
+    {
+        "query":     "Consumer sector outlook — retail, discretionary, staples, e-commerce",
+        "timeframe": "24h",
+        "limit":     12,
+        "label":     "consumer"
+    },
+    {
         "query":     "Overall market outlook — S&P 500, macro environment, geopolitical risks",
         "timeframe": "24h",
         "limit":     12,
