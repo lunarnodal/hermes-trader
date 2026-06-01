@@ -61,9 +61,9 @@ def ensure_collection(client: QdrantClient) -> None:
         log.info(f"Collection exists: {COLLECTION}")
 
 
-def signal_to_point_id(guid: str) -> str:
+def signal_to_point_id(guid) -> str:
     """Stable UUID-format point ID from article guid"""
-    h = hashlib.md5(guid.encode()).hexdigest()
+    h = hashlib.md5(str(guid).encode()).hexdigest()
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
 
 # ─── Embeddings ───────────────────────────────────────────────────────────────

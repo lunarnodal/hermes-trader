@@ -79,7 +79,7 @@ def normalize_article(article: dict, source_name: str) -> dict:
     ).isoformat() if article.get("datetime") else None
 
     return {
-        "guid":    article.get("id", article.get("url", "")),
+        "guid":    str(article.get("id", article.get("url", ""))),
         "source":  source_name,
         "title":   article.get("headline", ""),
         "url":     article.get("url", ""),

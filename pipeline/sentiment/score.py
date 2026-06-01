@@ -156,6 +156,12 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             assert scored.get("sentiment") in ("bullish", "bearish", "neutral")
             assert 0.0 <= float(scored.get("confidence", 0)) <= 1.0
 
+            # Ensure all required fields present with defaults
+            scored.setdefault("confidence", 0.65)
+            scored.setdefault("tickers", [])
+            scored.setdefault("sectors", [])
+            scored.setdefault("event_type", "other")
+            scored.setdefault("summary", "")
             return scored
 
         except (json.JSONDecodeError, AssertionError) as e:
@@ -242,11 +248,13 @@ def process_queue(queue_file: Path) -> Path | None:
             "confidence": float(score["confidence"]),
             "tickers":    enhanced_tickers,
             "sectors":    normalize_sectors(score.get("sectors", [])),
-            "event_type": score.get("event_type", "other"),
-            "summary":    score.get("summary", ""),
+            "event_type":  score.get("event_type", "other"),
+            "summary":     score.get("summary", ""),
+            "confidence":  score.get("confidence", 0.65),
+            "sentiment":   score.get("sentiment", "neutral"),
         }
         signals.append(signal)
-        log.info(f"  → {score['sentiment']} ({score['confidence']:.2f}) tickers={score.get('tickers', [])}")
+        log.info(f"  → {score.get('sentiment','?')} ({score.get('confidence',0):.2f}) tickers={score.get('tickers', [])}")
 
     if not signals:
         return None
