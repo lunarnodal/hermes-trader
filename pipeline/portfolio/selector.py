@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 # Tickers to exclude from stock selection
 # These are exchange/index names misidentified as tickers
 EXCLUDED_TICKERS = {
+    "BRK/A", "BRK/B",  # Yahoo Finance can't handle slash in ticker
     'NDAQ', 'NYSE', 'CBOE', 'SPX', 'DJIA', 'VIX', 'DXY',
     'DOW', 'SP', 'ETF', 'IPO', 'AI', 'EV',
 }
