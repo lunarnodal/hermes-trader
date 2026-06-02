@@ -314,7 +314,7 @@ def save_recommendations(conn, recommendations: list[dict]) -> None:
     conn.commit()
 
 
-def run_portfolio_cycle(dry_run: bool = True) -> dict:
+def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     """
     Main portfolio management cycle
     dry_run=True: generate recommendations only, don't execute
@@ -377,9 +377,13 @@ def run_portfolio_cycle(dry_run: bool = True) -> dict:
 
     # ── Step 3: Generate recommendations ─────────────────────────────────────
     if predictions:
-        recommendations = generate_recommendations(
-            predictions, signals, positions, cash, port_val, conn
-        )
+        if exits_only:
+            log.info("Exits-only mode — skipping new entry recommendations")
+            recommendations = []
+        else:
+            recommendations = generate_recommendations(
+                predictions, signals, positions, cash, port_val, conn
+            )
         # Deduplicate — keep highest-value BUY per ticker
         seen_tickers = {}
         deduped = []
@@ -436,6 +440,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true",
                         help="Execute trades (default: dry run)")
+    parser.add_argument("--exits-only", action="store_true",
+                        help="Execute exits only (stop loss + profit tiers), no new entries")
     args = parser.parse_args()
 
     # Prevent simultaneous runs using PID file
@@ -452,7 +458,10 @@ if __name__ == "__main__":
 
     pidfile.write_text(str(os.getpid()))
     try:
-        results = run_portfolio_cycle(dry_run=not args.execute)
+        results = run_portfolio_cycle(
+            dry_run=not args.execute,
+            exits_only=getattr(args, 'exits_only', False)
+        )
     finally:
         pidfile.unlink(missing_ok=True)
 
