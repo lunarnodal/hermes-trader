@@ -49,6 +49,53 @@ MARKET_HOLIDAYS_2026 = {
 }
 
 
+def is_drawdown_breaker(conn) -> bool:
+    """Return True if portfolio has dropped >2% in last 5 trading days"""
+    if not CONFIG.get("drawdown_circuit_breaker_pct"):
+        return False
+    threshold = CONFIG["drawdown_circuit_breaker_pct"]
+    starting  = CONFIG["starting_capital"]
+    # Get portfolio snapshots from last 5 days
+    rows = conn.execute("""
+        SELECT total_value FROM portfolio_snapshots
+        ORDER BY timestamp DESC LIMIT 5
+    """).fetchall()
+    if len(rows) < 2:
+        return False
+    peak  = max(r[0] for r in rows)
+    current = get_portfolio_value(conn)
+    drawdown = (peak - current) / peak
+    if drawdown >= threshold:
+        log.warning(f"Circuit breaker: portfolio down {drawdown:.1%} from recent peak ${peak:,.2f}")
+        return True
+    return False
+
+
+def is_macro_bearish() -> bool:
+    """Return True if most recent market_overview prediction is bearish"""
+    if not CONFIG.get("macro_gate_enabled"):
+        return False
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+        _db = _Path(__file__).parent.parent / "data" / "paper_trading.db"
+        _conn = _sql.connect(_db)
+        row = _conn.execute("""
+            SELECT direction, confidence FROM predictions
+            WHERE query LIKE \'%market outlook%\'
+               OR query LIKE \'%S&P 500%\'
+               OR query LIKE \'%macro%\'
+            ORDER BY created_at DESC LIMIT 1
+        """).fetchone()
+        _conn.close()
+        if row and row[0] == "bearish" and row[1] >= 0.70:
+            log.warning(f"Macro gate: market_overview is bearish ({row[1]:.0%}) — blocking new entries")
+            return True
+    except Exception as e:
+        log.warning(f"Macro gate check failed: {e}")
+    return False
+
+
 def is_market_holiday() -> bool:
     """Check if today is a US market holiday"""
     return date.today() in MARKET_HOLIDAYS_2026
@@ -207,6 +254,16 @@ def execute_recommendations(conn, recommendations: list[dict],
         # Check weekly trade limit
         if week_buys >= CONFIG["max_new_positions_week"]:
             log.info(f"SKIP {ticker} — weekly limit reached ({week_buys} trades)")
+            continue
+
+        # Macro gate — block all entries if market is broadly bearish
+        if is_macro_bearish():
+            log.info(f"SKIP {ticker} — macro gate active (market bearish)")
+            continue
+
+        # Circuit breaker — block entries if portfolio in drawdown
+        if is_drawdown_breaker(conn):
+            log.info(f"SKIP {ticker} — circuit breaker active (drawdown)")
             continue
 
         # Check max concurrent open positions

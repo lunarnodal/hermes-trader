@@ -335,7 +335,7 @@ def generate_recommendations(predictions: list[dict],
         query     = pred.get("query", "")
 
         # Only act on bullish predictions with sufficient confidence
-        if direction != "bullish" or confidence < 0.60:
+        if direction != "bullish" or confidence < 0.70:
             log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
             continue
 

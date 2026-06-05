@@ -36,8 +36,10 @@ CONFIG = {
     "min_hold_before_stop_days": 1,  # Don't stop out same day as entry
     "min_hold_days":        3,         # minimum 3 trading days
     "max_hold_days":        10,        # re-evaluate after 10 trading days
-    "max_new_positions_week": 10,      # max 10 new positions per week (PDT only triggers on same-day round trips)
+    "max_new_positions_week": 5,       # max 5 new positions per week — quality over quantity
     "max_open_positions":   12,        # max 12 simultaneous open positions
+    "drawdown_circuit_breaker_pct": 0.02,   # pause entries if portfolio drops >2% in 5 days
+    "macro_gate_enabled": True,             # block entries if market_overview is bearish
     "max_positions_per_sector": {
         "technology":   4,
         "healthcare":   3,
@@ -67,9 +69,9 @@ CONFIG = {
         },
     },
     "confidence_tiers": {
-        "low":    (0.60, 0.70, 0.04),  # conf range → position % (midpoint)
-        "medium": (0.70, 0.80, 0.06),
-        "high":   (0.80, 1.00, 0.085),
+        "low":    (0.70, 0.75, 0.04),  # raised floor — 0.70 minimum confidence
+        "medium": (0.75, 0.85, 0.06),
+        "high":   (0.85, 1.00, 0.085),
     },
     "market_open":  "09:30",
     "market_close": "16:00",
