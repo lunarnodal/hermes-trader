@@ -164,60 +164,72 @@ async function load() {
     </div>
 
     <!-- Prediction Performance -->
-    <div class="card">
-      <h2>Prediction Performance</h2>
-      <div class="stat">
-        <span class="stat-label">Total Predictions</span>
-        <span class="stat-value">${data.perf?.total || 0}</span>
+    <div class="card" style="grid-column: 1 / -1;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2>Prediction Performance</h2>
+        <div style="display:flex; gap:16px; font-size:13px;">
+          <span style="color:#8b949e">Total: <strong style="color:#e6edf3">${data.perf?.total || 0}</strong></span>
+          <span style="color:#8b949e">Verified: <strong style="color:#e6edf3">${data.perf?.verified || 0}</strong></span>
+          <span style="color:#8b949e">Win Rate: <strong class="${(data.perf?.win_rate || 0) >= 0.5 ? 'bullish' : 'bearish'}">${data.perf?.win_rate_pct || 'N/A'}</strong></span>
+        </div>
       </div>
-      <div class="stat">
-        <span class="stat-label">Verified</span>
-        <span class="stat-value">${data.perf?.verified || 0}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Win Rate</span>
-        <span class="stat-value ${data.perf?.win_rate > 0.5 ? 'bullish' : 'bearish'}">
-          ${data.perf?.win_rate_pct || 'N/A'}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Avg Confidence</span>
-        <span class="stat-value">${data.perf?.avg_conf || 'N/A'}</span>
-      </div>
-      ${data.perf?.verified > 0 ? `
-      <div class="progress-bar" style="margin-top:12px">
-        <div class="progress-fill win-fill"
-             style="width:${data.perf?.win_rate_pct || '0%'}"></div>
-      </div>` : '<div class="stat"><span class="stat-label" style="color:#8b949e;font-size:12px">No verified predictions yet</span></div>'}
-    </div>
 
-    <!-- Recent Predictions -->
-    <div class="card full-width">
-      <h2>Predictions</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>#</th><th>Query</th><th>Direction</th>
-            <th>Probability</th><th>Confidence</th>
-            <th>Timeframe</th><th>Status</th><th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${(data.predictions || []).map(p => `
-          <tr>
-            <td>${p.id}</td>
-            <td>${p.query}</td>
-            <td>${dirBadge(p.direction)}</td>
-            <td>${(p.probability * 100).toFixed(0)}%</td>
-            <td>${(p.confidence * 100).toFixed(0)}%</td>
-            <td>${p.timeframe}</td>
-            <td class="${p.was_correct === 1 ? 'correct' : p.was_correct === 0 ? 'wrong' : 'pending'}">
-              ${p.was_correct === 1 ? '✓ Correct' : p.was_correct === 0 ? '✗ Wrong' :
-                p.expires_in < 0 ? '⏳ Pending verification' : `⏱ ${p.expires_in}h left`}
-            </td>
-            <td class="timestamp">${p.created_at}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
+      <!-- Today's predictions prominent display -->
+      <div style="margin-bottom:16px;">
+        <div style="font-size:12px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Today's Predictions</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          ${(data.predictions || []).filter(p => {
+            const created = new Date(p.created_at);
+            const now = new Date();
+            const diffHours = (now - created) / 36e5;
+            return diffHours <= 24;
+          }).map(p => `
+          <div style="background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:10px 14px; min-width:200px; flex:1;">
+            <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">${p.query.replace('— ', '').substring(0,35)}...</div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span>${dirBadge(p.direction)}</span>
+              <span style="font-size:12px; color:#8b949e;">${(p.confidence*100).toFixed(0)}% conf</span>
+              <span class="${p.was_correct === 1 ? 'correct' : p.was_correct === 0 ? 'wrong' : 'pending'}" style="font-size:12px;">
+                ${p.was_correct === 1 ? '✓' : p.was_correct === 0 ? '✗' : p.expires_in > 0 ? '⏱'+p.expires_in+'h' : '⏳'}
+              </span>
+            </div>
+          </div>`).join('') || '<div style="color:#8b949e; font-size:13px;">No predictions yet today</div>'}
+        </div>
+      </div>
+
+      <!-- History toggle -->
+      <details>
+        <summary style="cursor:pointer; font-size:13px; color:#8b949e; user-select:none; padding:8px 0; border-top:1px solid #30363d;">
+          Show prediction history (${(data.predictions || []).length} total)
+        </summary>
+        <div style="margin-top:12px; overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead>
+              <tr style="color:#8b949e; text-align:left; border-bottom:1px solid #30363d;">
+                <th style="padding:6px 8px;">#</th>
+                <th style="padding:6px 8px;">Query</th>
+                <th style="padding:6px 8px;">Direction</th>
+                <th style="padding:6px 8px;">Conf</th>
+                <th style="padding:6px 8px;">Status</th>
+                <th style="padding:6px 8px;">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(data.predictions || []).slice().reverse().map(p => `
+              <tr style="border-bottom:1px solid #21262d;">
+                <td style="padding:5px 8px; color:#8b949e;">${p.id}</td>
+                <td style="padding:5px 8px; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.query}</td>
+                <td style="padding:5px 8px;">${dirBadge(p.direction)}</td>
+                <td style="padding:5px 8px;">${(p.confidence*100).toFixed(0)}%</td>
+                <td style="padding:5px 8px;" class="${p.was_correct === 1 ? 'correct' : p.was_correct === 0 ? 'wrong' : 'pending'}">
+                  ${p.was_correct === 1 ? '✓ Correct' : p.was_correct === 0 ? '✗ Wrong' : p.expires_in > 0 ? '⏱ '+p.expires_in+'h' : '⏳ Pending'}
+                </td>
+                <td style="padding:5px 8px; color:#8b949e; white-space:nowrap;">${p.created_at}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
 
     <!-- Top Sectors -->
