@@ -334,10 +334,10 @@ async function loadData() {
   const macroP = (data.predictions||[]).find(p =>
     p.query && (p.query.includes('market outlook') || p.query.includes('macro')));
   const circuitBreaker = (data.portfolio?.return_pct || 0) < -2;
-  const now = new Date();
-  const day = now.getDay();
-  const hour = now.getHours();
-  const min = now.getMinutes();
+  const nowDt = new Date();
+  const day = nowDt.getDay();
+  const hour = nowDt.getHours();
+  const min = nowDt.getMinutes();
   const timeVal = hour * 60 + min;
   const isWeekday = day >= 1 && day <= 5;
   const isMarketHours = timeVal >= 570 && timeVal <= 960; // 9:30-16:00
