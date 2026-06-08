@@ -35,354 +35,703 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading AI Dashboard</title>
 <meta http-equiv="refresh" content="60">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-         background: #0d1117; color: #e6edf3; min-height: 100vh; }
-  .header { background: #161b22; border-bottom: 1px solid #30363d;
-            padding: 16px 24px; display: flex; align-items: center;
-            justify-content: space-between; }
-  .header h1 { font-size: 18px; font-weight: 600; }
-  .header .subtitle { color: #8b949e; font-size: 13px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          gap: 16px; padding: 24px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-          padding: 20px; }
-  .card h2 { font-size: 14px; font-weight: 600; color: #8b949e;
-             text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
-  .stat { display: flex; justify-content: space-between; align-items: center;
-          padding: 8px 0; border-bottom: 1px solid #21262d; }
-  .stat:last-child { border-bottom: none; }
-  .stat-label { color: #8b949e; font-size: 13px; }
-  .stat-value { font-size: 15px; font-weight: 600; }
-  .bullish { color: #3fb950; }
-  .bearish { color: #f85149; }
-  .neutral { color: #8b949e; }
-  .mixed   { color: #d29922; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
-           font-size: 11px; font-weight: 600; }
-  .badge-bull { background: #0d4a1f; color: #3fb950; }
-  .badge-bear { background: #4a0d0d; color: #f85149; }
-  .badge-neut { background: #21262d; color: #8b949e; }
-  .prediction { padding: 12px 0; border-bottom: 1px solid #21262d; }
-  .prediction:last-child { border-bottom: none; }
-  .pred-query { font-size: 13px; margin-bottom: 6px; color: #e6edf3; }
-  .pred-meta { font-size: 11px; color: #8b949e; display: flex; gap: 12px; }
-  .signal-row { padding: 8px 0; border-bottom: 1px solid #21262d;
-                font-size: 12px; }
-  .signal-row:last-child { border-bottom: none; }
-  .signal-title { color: #e6edf3; margin-bottom: 3px; }
-  .signal-meta { color: #8b949e; display: flex; gap: 8px; }
-  .progress-bar { background: #21262d; border-radius: 4px; height: 6px;
-                  margin-top: 4px; }
-  .progress-fill { height: 100%; border-radius: 4px; background: #3fb950; }
-  .win-fill { background: #3fb950; }
-  .loss-fill { background: #f85149; }
-  .timestamp { color: #8b949e; font-size: 11px; }
-  .full-width { grid-column: 1 / -1; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; padding: 8px 12px; color: #8b949e; font-weight: 500;
-       border-bottom: 1px solid #30363d; }
-  td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
-  tr:last-child td { border-bottom: none; }
-  .correct { color: #3fb950; }
-  .wrong { color: #f85149; }
-  .pending { color: #8b949e; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       background:#0d1117;color:#e6edf3;min-height:100vh;font-size:13px}
+  a{color:#58a6ff}
+  .header{background:#161b22;border-bottom:1px solid #30363d;
+          padding:12px 20px;display:flex;align-items:center;justify-content:space-between;
+          position:sticky;top:0;z-index:100}
+  .header h1{font-size:16px;font-weight:600}
+  .header-right{display:flex;align-items:center;gap:12px}
+  .status-badge{display:flex;align-items:center;gap:6px;font-size:12px;
+                padding:4px 10px;border-radius:20px;font-weight:500}
+  .status-active{background:#1a3a2a;color:#3fb950;border:1px solid #238636}
+  .status-macro{background:#3a2a0a;color:#d29922;border:1px solid #9e6a03}
+  .status-breaker{background:#3a1a1a;color:#f85149;border:1px solid #da3633}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .last-run{font-size:11px;color:#8b949e}
+  .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:16px 20px}
+  .metric{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
+  .metric-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
+  .metric-value{font-size:22px;font-weight:600}
+  .metric-sub{font-size:11px;color:#8b949e;margin-top:3px}
+  .green{color:#3fb950} .red{color:#f85149} .yellow{color:#d29922} .blue{color:#58a6ff} .gray{color:#8b949e}
+  .grid{display:grid;gap:12px;padding:0 20px 20px}
+  .grid-2{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:1fr 1fr 1fr}
+  .grid-1-2{grid-template-columns:1fr 2fr}
+  .grid-2-1{grid-template-columns:2fr 1fr}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;
+        cursor:grab;user-select:none;transition:border-color 0.15s}
+  .card:active{cursor:grabbing}
+  .card.drag-over{border-color:#58a6ff;background:#1c2128}
+  .card.dragging{opacity:0.4;border-color:#58a6ff}
+  .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .card-title{font-size:13px;font-weight:600;color:#e6edf3}
+  .drag-handle{font-size:16px;color:#30363d;cursor:grab;line-height:1}
+  .drag-handle:hover{color:#8b949e}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:11px;color:#8b949e;font-weight:400;text-align:left;
+     padding:0 0 6px;border-bottom:1px solid #21262d}
+  td{padding:6px 0;border-bottom:1px solid #21262d;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500}
+  .badge-bull{background:#1a3a2a;color:#3fb950}
+  .badge-bear{background:#3a1a1a;color:#f85149}
+  .badge-neut{background:#1c2128;color:#8b949e;border:1px solid #30363d}
+  .badge-mix{background:#2a2a1a;color:#d29922}
+  .correct{color:#3fb950} .wrong{color:#f85149} .pending{color:#8b949e}
+  .timestamp{color:#8b949e;font-size:11px}
+  .bar-bg{background:#21262d;border-radius:3px;height:6px;flex:1}
+  .bar-fill{border-radius:3px;height:6px;transition:width 0.3s}
+  details summary{cursor:pointer;font-size:12px;color:#8b949e;padding:8px 0;
+                  border-top:1px solid #21262d;margin-top:8px;list-style:none}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▶ ";font-size:10px}
+  details[open] summary::before{content:"▼ "}
+  .activity-item{display:flex;justify-content:space-between;align-items:center;
+                 padding:5px 0;border-bottom:1px solid #21262d;font-size:12px}
+  .activity-item:last-child{border-bottom:none}
+  .pred-card{background:#0d1117;border:1px solid #21262d;border-radius:6px;
+             padding:8px 12px;margin-bottom:6px}
+  .pred-row{display:flex;justify-content:space-between;align-items:center}
+  .pred-sector{font-size:12px;color:#e6edf3;margin-bottom:4px}
+  .chart-wrap{position:relative;width:100%}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:#8b949e;margin-bottom:8px}
+  .legend-dot{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:4px}
+  .sector-bar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .sector-name{font-size:12px;width:100px;color:#e6edf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sector-count{font-size:11px;color:#8b949e;width:30px;text-align:right}
+  .pos-pnl-bar{height:3px;border-radius:2px;margin-top:3px}
 </style>
 </head>
 <body>
+
 <div class="header">
   <div>
-    <h1>⚡ Trading AI Dashboard</h1>
-    <div class="subtitle">Auto-refreshes every 60s</div>
+    <h1>Trading AI</h1>
   </div>
-  <div class="timestamp" id="ts"></div>
+  <div class="header-right">
+    <span class="last-run" id="lastRun">Loading...</span>
+    <span class="status-badge status-active" id="statusBadge">
+      <span class="status-dot"></span>
+      <span id="statusText">Trading active</span>
+    </span>
+  </div>
 </div>
-<div class="grid" id="grid">Loading...</div>
-<script>
-document.getElementById('ts').textContent = new Date().toLocaleString();
 
-async function load() {
-  const data = await fetch('/api/data').then(r => r.json());
-  const grid = document.getElementById('grid');
+<div class="metrics" id="metrics">
+  <div class="metric">
+    <div class="metric-label">Portfolio value</div>
+    <div class="metric-value" id="mPortfolio">—</div>
+    <div class="metric-sub" id="mReturn">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Cash available</div>
+    <div class="metric-value" id="mCash">—</div>
+    <div class="metric-sub" id="mCashPct">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Win rate</div>
+    <div class="metric-value" id="mWinRate">—</div>
+    <div class="metric-sub" id="mVerified">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Open positions</div>
+    <div class="metric-value" id="mPositions">—</div>
+    <div class="metric-sub" id="mSlots">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Signal vectors</div>
+    <div class="metric-value" id="mVectors">—</div>
+    <div class="metric-sub" id="mSignals24">—</div>
+  </div>
+</div>
 
-  const dirColor = d => d === 'bullish' ? 'bullish' : d === 'bearish' ? 'bearish' : 'neutral';
-  const dirBadge = d => `<span class="badge badge-${d === 'bullish' ? 'bull' : d === 'bearish' ? 'bear' : 'neut'}">${d?.toUpperCase() || 'N/A'}</span>`;
+<div id="dashGrid">
 
-  grid.innerHTML = `
-    <!-- Pipeline Stats -->
-    <div class="card">
-      <h2>Pipeline Health</h2>
-      <div class="stat">
-        <span class="stat-label">Qdrant Vectors</span>
-        <span class="stat-value">${data.qdrant_count?.toLocaleString()}</span>
+  <div class="grid grid-2" id="row0">
+    <div class="card" draggable="true" id="card-pnl">
+      <div class="card-header">
+        <span class="card-title">Portfolio value</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Active Rules</span>
-        <span class="stat-value">${data.rules_count}</span>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#58a6ff"></span>Value</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>$50k baseline</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Pending Proposals</span>
-        <span class="stat-value">${data.proposals_count}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Signals (24h)</span>
-        <span class="stat-value">${data.signals_24h}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Last Pipeline Run</span>
-        <span class="stat-value timestamp">${data.last_run || 'N/A'}</span>
+      <div class="chart-wrap" style="height:160px">
+        <canvas id="pnlChart" role="img" aria-label="Portfolio value over time">Portfolio value chart</canvas>
       </div>
     </div>
 
-    <!-- Sentiment Distribution -->
-    <div class="card">
-      <h2>Signal Sentiment (48h)</h2>
-      <div class="stat">
-        <span class="stat-label">Bullish</span>
-        <span class="stat-value bullish">${data.sentiment?.bullish || 0}
-          (${data.sentiment?.bull_pct || 0}%)</span>
+    <div class="card" draggable="true" id="card-winrate">
+      <div class="card-header">
+        <span class="card-title">Win rate trend</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Bearish</span>
-        <span class="stat-value bearish">${data.sentiment?.bearish || 0}
-          (${data.sentiment?.bear_pct || 0}%)</span>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#f85149"></span>Win rate</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>50% target</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Neutral</span>
-        <span class="stat-value neutral">${data.sentiment?.neutral || 0}
-          (${data.sentiment?.neut_pct || 0}%)</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Avg Confidence</span>
-        <span class="stat-value">${data.sentiment?.avg_conf || 0}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Top Sector</span>
-        <span class="stat-value">${data.sentiment?.top_sector || 'N/A'}</span>
+      <div class="chart-wrap" style="height:160px">
+        <canvas id="winChart" role="img" aria-label="Win rate trend over time">Win rate chart</canvas>
       </div>
     </div>
+  </div>
 
-    <!-- Prediction Performance -->
-    <div class="card" style="grid-column: 1 / -1;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h2>Prediction Performance</h2>
-        <div style="display:flex; gap:16px; font-size:13px;">
-          <span style="color:#8b949e">Total: <strong style="color:#e6edf3">${data.perf?.total || 0}</strong></span>
-          <span style="color:#8b949e">Verified: <strong style="color:#e6edf3">${data.perf?.verified || 0}</strong></span>
-          <span style="color:#8b949e">Win Rate: <strong class="${(data.perf?.win_rate || 0) >= 0.5 ? 'bullish' : 'bearish'}">${data.perf?.win_rate_pct || 'N/A'}</strong></span>
-        </div>
+  <div class="grid grid-2-1" id="row1">
+    <div class="card" draggable="true" id="card-positions">
+      <div class="card-header">
+        <span class="card-title">Open positions</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Ticker</th><th>Sector</th><th>Shares</th>
+            <th style="text-align:right">Entry</th>
+            <th style="text-align:right">P&L</th>
+            <th style="text-align:right">Stop</th>
+            <th style="text-align:center">Tier</th>
+            <th style="text-align:right">Days</th>
+          </tr>
+        </thead>
+        <tbody id="positionsBody">
+          <tr><td colspan="8" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-      <!-- Today's predictions prominent display -->
-      <div style="margin-bottom:16px;">
-        <div style="font-size:12px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">Today's Predictions</div>
-        <div style="display:flex; flex-wrap:wrap; gap:8px;">
-          ${(data.predictions || []).filter(p => {
-            const created = new Date(p.created_at);
-            const now = new Date();
-            const diffHours = (now - created) / 36e5;
-            return diffHours <= 24;
-          }).map(p => `
-          <div style="background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:10px 14px; min-width:200px; flex:1;">
-            <div style="font-size:11px; color:#8b949e; margin-bottom:4px;">${p.query.replace('— ', '').substring(0,35)}...</div>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span>${dirBadge(p.direction)}</span>
-              <span style="font-size:12px; color:#8b949e;">${(p.confidence*100).toFixed(0)}% conf</span>
-              <span class="${p.was_correct === 1 ? 'correct' : p.was_correct === 0 ? 'wrong' : 'pending'}" style="font-size:12px;">
-                ${p.was_correct === 1 ? '✓' : p.was_correct === 0 ? '✗' : p.expires_in > 0 ? '⏱'+p.expires_in+'h' : '⏳'}
-              </span>
-            </div>
-          </div>`).join('') || '<div style="color:#8b949e; font-size:13px;">No predictions yet today</div>'}
-        </div>
+    <div class="card" draggable="true" id="card-sector">
+      <div class="card-header">
+        <span class="card-title">Sector exposure</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
+      <div class="chart-wrap" style="height:180px">
+        <canvas id="sectorChart" role="img" aria-label="Sector exposure donut chart">Sector allocation</canvas>
+      </div>
+      <div id="sectorLegend" class="legend" style="margin-top:8px;flex-direction:column;gap:4px"></div>
+    </div>
+  </div>
 
-      <!-- History toggle -->
-      <details>
-        <summary style="cursor:pointer; font-size:13px; color:#8b949e; user-select:none; padding:8px 0; border-top:1px solid #30363d;">
-          Show prediction history (${(data.predictions || []).length} total)
-        </summary>
-        <div style="margin-top:12px; overflow-x:auto;">
-          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+  <div class="grid grid-2" id="row2">
+    <div class="card" draggable="true" id="card-predictions">
+      <div class="card-header">
+        <span class="card-title">Today\'s predictions</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+      </div>
+      <div id="todayPreds">
+        <div class="gray" style="font-size:12px">Loading...</div>
+      </div>
+      <details id="predsHistory">
+        <summary id="predsHistorySummary">Show history</summary>
+        <div style="overflow-x:auto;margin-top:10px">
+          <table>
             <thead>
-              <tr style="color:#8b949e; text-align:left; border-bottom:1px solid #30363d;">
-                <th style="padding:6px 8px;">#</th>
-                <th style="padding:6px 8px;">Query</th>
-                <th style="padding:6px 8px;">Direction</th>
-                <th style="padding:6px 8px;">Conf</th>
-                <th style="padding:6px 8px;">Status</th>
-                <th style="padding:6px 8px;">Created</th>
+              <tr>
+                <th>#</th><th>Query</th><th>Direction</th>
+                <th style="text-align:right">Conf</th>
+                <th>Status</th>
+                <th>Created</th>
               </tr>
             </thead>
-            <tbody>
-              ${(data.predictions || []).slice().reverse().map(p => `
-              <tr style="border-bottom:1px solid #21262d;">
-                <td style="padding:5px 8px; color:#8b949e;">${p.id}</td>
-                <td style="padding:5px 8px; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.query}</td>
-                <td style="padding:5px 8px;">${dirBadge(p.direction)}</td>
-                <td style="padding:5px 8px;">${(p.confidence*100).toFixed(0)}%</td>
-                <td style="padding:5px 8px;" class="${p.was_correct === 1 ? 'correct' : p.was_correct === 0 ? 'wrong' : 'pending'}">
-                  ${p.was_correct === 1 ? '✓ Correct' : p.was_correct === 0 ? '✗ Wrong' : p.expires_in > 0 ? '⏱ '+p.expires_in+'h' : '⏳ Pending'}
-                </td>
-                <td style="padding:5px 8px; color:#8b949e; white-space:nowrap;">${p.created_at}</td>
-              </tr>`).join('')}
-            </tbody>
+            <tbody id="predsHistoryBody"></tbody>
           </table>
         </div>
       </details>
     </div>
 
-    <!-- Top Sectors -->
-    <div class="card">
-      <h2>Top Sectors (48h)</h2>
-      ${(data.top_sectors || []).map(s => `
-      <div class="stat">
-        <span class="stat-label">${s.sector}</span>
-        <span class="stat-value ${dirColor(s.bias)}">${s.count} signals</span>
-      </div>`).join('')}
+    <div class="card" draggable="true" id="card-activity">
+      <div class="card-header">
+        <span class="card-title">Recent activity</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+      </div>
+      <div id="activityFeed">
+        <div class="gray" style="font-size:12px">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-2" id="row3">
+    <div class="card" draggable="true" id="card-sectors">
+      <div class="card-header">
+        <span class="card-title">Top sectors (48h signals)</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+      </div>
+      <div id="sectorBars"></div>
     </div>
 
-    <!-- Top Tickers -->
-    <div class="card">
-      <h2>Most Mentioned Tickers (48h)</h2>
-      ${(data.top_tickers || []).map(t => `
-      <div class="stat">
-        <span class="stat-label">${t.ticker}</span>
-        <span class="stat-value ${dirColor(t.bias)}">${t.count} × ${dirBadge(t.bias)}</span>
-      </div>`).join('')}
+    <div class="card" draggable="true" id="card-tickers">
+      <div class="card-header">
+        <span class="card-title">Most mentioned tickers</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+      </div>
+      <div id="tickerBars"></div>
     </div>
+  </div>
 
-    <!-- Portfolio Summary -->
-    <div class="card">
-      <h2>Portfolio</h2>
-      <div class="stat">
-        <span class="stat-label">Total Value</span>
-        <span class="stat-value ${data.portfolio?.return_pct >= 0 ? 'bullish' : 'bearish'}">
-          $${data.portfolio?.total_value?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
+  <div class="grid grid-1-2" id="row4">
+    <div class="card" draggable="true" id="card-sentiment">
+      <div class="card-header">
+        <span class="card-title">Sentiment (48h)</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
-      <div class="stat">
-        <span class="stat-label">Cash</span>
-        <span class="stat-value">$${data.portfolio?.cash?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Positions Value</span>
-        <span class="stat-value">$${data.portfolio?.positions_value?.toLocaleString('en-US', {minimumFractionDigits:2})}</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Return</span>
-        <span class="stat-value ${data.portfolio?.return_pct >= 0 ? 'bullish' : 'bearish'}">
-          ${data.portfolio?.return_pct >= 0 ? '+' : ''}${data.portfolio?.return_pct?.toFixed(2)}%</span>
-      </div>
-      <div class="stat">
-        <span class="stat-label">Open Positions</span>
-        <span class="stat-value">${data.portfolio?.open_count || 0}</span>
+      <div class="chart-wrap" style="height:160px">
+        <canvas id="sentChart" role="img" aria-label="Sentiment distribution chart">Sentiment chart</canvas>
       </div>
     </div>
 
-    <!-- Open Positions -->
-    <div class="card full-width">
-      <h2>Open Positions</h2>
-      ${(data.positions || []).length === 0 ?
-        '<div class="stat"><span class="stat-label">No open positions</span></div>' :
-        `<table>
-          <thead><tr>
-            <th>Ticker</th><th>Sector</th><th>Shares</th>
-            <th>Entry</th><th>Current</th><th>Cost</th>
-            <th>Value</th><th>P&L</th><th>P&L%</th>
-            <th>Stop</th><th>Target</th><th>Days</th>
-          </tr></thead>
-          <tbody>
-            ${(data.positions || []).map(p => `
-            <tr>
-              <td><strong>${p.ticker}</strong></td>
-              <td>${p.sector}</td>
-              <td>${p.shares}</td>
-              <td>$${p.entry_price?.toFixed(2)}</td>
-              <td>$${p.current_price?.toFixed(2)}</td>
-              <td>$${p.cost_basis?.toFixed(2)}</td>
-              <td>$${p.current_value?.toFixed(2)}</td>
-              <td class="${p.unrealized_pnl >= 0 ? 'correct' : 'wrong'}">
-                $${p.unrealized_pnl?.toFixed(2)}</td>
-              <td class="${p.unrealized_pct >= 0 ? 'correct' : 'wrong'}">
-                ${p.unrealized_pct >= 0 ? '+' : ''}${p.unrealized_pct?.toFixed(2)}%</td>
-              <td class="bearish">$${p.stop_loss?.toFixed(2)}</td>
-              <td class="bullish">$${p.take_profit?.toFixed(2)}</td>
-              <td>${p.hold_days}d</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>`}
-    </div>
-
-    <!-- Recommendations -->
-    <div class="card full-width">
-      <h2>Latest Recommendations</h2>
+    <div class="card" draggable="true" id="card-closed">
+      <div class="card-header">
+        <span class="card-title">Closed positions</span>
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+      </div>
       <table>
-        <thead><tr>
-          <th>Action</th><th>Ticker</th><th>Sector</th>
-          <th>Signals</th><th>Confidence</th>
-          <th>Shares</th><th>Value</th><th>Rationale</th><th>Generated</th>
-        </tr></thead>
-        <tbody>
-          ${(data.recommendations || []).map(r => `
+        <thead>
           <tr>
-            <td><span class="badge ${r.action === 'BUY' ? 'badge-bull' :
-                                     r.action === 'SELL' ? 'badge-bear' :
-                                     'badge-neut'}">${r.action}</span></td>
-            <td><strong>${r.ticker}</strong></td>
-            <td>${r.sector}</td>
-            <td>${r.signals}</td>
-            <td>${r.confidence}%</td>
-            <td>${r.shares || '—'}</td>
-            <td>${r.value ? '$' + r.value.toFixed(2) : '—'}</td>
-            <td>${r.rationale}</td>
-            <td class="timestamp">${r.generated}</td>
-          </tr>`).join('')}
+            <th>Ticker</th>
+            <th style="text-align:right">Entry</th>
+            <th style="text-align:right">Exit</th>
+            <th style="text-align:right">P&L</th>
+            <th>Reason</th>
+            <th>Date</th>
+          </tr>
+        </thead>
+        <tbody id="closedBody">
+          <tr><td colspan="6" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
         </tbody>
       </table>
     </div>
+  </div>
 
-    <!-- Closed Positions -->
-    ${(data.closed_positions || []).length > 0 ? `
-    <div class="card full-width">
-      <h2>Closed Positions</h2>
-      <table>
-        <thead><tr>
-          <th>Ticker</th><th>Entry</th><th>Exit</th>
-          <th>P&L</th><th>P&L%</th><th>Reason</th><th>Date</th>
-        </tr></thead>
-        <tbody>
-          ${data.closed_positions.map(c => `
-          <tr>
-            <td><strong>${c.ticker}</strong></td>
-            <td>$${c.entry?.toFixed(2)}</td>
-            <td>$${c.exit?.toFixed(2)}</td>
-            <td class="${c.pnl >= 0 ? 'correct' : 'wrong'}">$${c.pnl?.toFixed(2)}</td>
-            <td class="${c.pnl_pct >= 0 ? 'correct' : 'wrong'}">${c.pnl_pct >= 0 ? '+' : ''}${c.pnl_pct?.toFixed(2)}%</td>
-            <td>${c.reason}</td>
-            <td class="timestamp">${c.date}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>` : ''}
+</div>
 
-    <!-- Recent Signals -->
-    <div class="card full-width">
-      <h2>Recent Signals</h2>
-      ${(data.recent_signals || []).map(s => `
-      <div class="signal-row">
-        <div class="signal-title">${s.title}</div>
-        <div class="signal-meta">
-          <span>${dirBadge(s.sentiment)}</span>
-          <span>conf=${(s.confidence*100).toFixed(0)}%</span>
-          <span>${s.source}</span>
-          ${s.tickers?.length ? `<span>📈 ${s.tickers.join(' ')}</span>` : ''}
-          ${s.sectors?.length ? `<span>🏭 ${s.sectors.slice(0,3).join(', ')}</span>` : ''}
-        </div>
-      </div>`).join('')}
-    </div>
-  `;
+<script>
+const fmt$ = v => '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtK = v => '$' + (v/1000).toFixed(1) + 'k';
+const fmtPct = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+
+function dirBadge(d) {
+  if (d === 'bullish') return '<span class="badge badge-bull">bullish</span>';
+  if (d === 'bearish') return '<span class="badge badge-bear">bearish</span>';
+  if (d === 'mixed')   return '<span class="badge badge-mix">mixed</span>';
+  return '<span class="badge badge-neut">neutral</span>';
 }
-load();
+
+let pnlChartInst, winChartInst, sectorChartInst, sentChartInst;
+const SECTOR_COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0ff','#56d364','#ffa657'];
+
+async function loadData() {
+  const data = await fetch('/api/data').then(r => r.json());
+
+  // Status badge
+  const badge = document.getElementById('statusBadge');
+  const statusText = document.getElementById('statusText');
+  const macroP = (data.predictions||[]).find(p =>
+    p.query && (p.query.includes('market outlook') || p.query.includes('macro')));
+  const circuitBreaker = (data.portfolio?.return_pct || 0) < -2;
+  const now = new Date();
+  const day = now.getDay();
+  const hour = now.getHours();
+  const min = now.getMinutes();
+  const timeVal = hour * 60 + min;
+  const isWeekday = day >= 1 && day <= 5;
+  const isMarketHours = timeVal >= 570 && timeVal <= 960; // 9:30-16:00
+  const marketOpen = isWeekday && isMarketHours;
+  if (circuitBreaker) {
+    badge.className = 'status-badge status-breaker';
+    statusText.textContent = 'Circuit breaker active';
+  } else if (macroP && macroP.direction === 'bearish' && macroP.confidence >= 0.70) {
+    badge.className = 'status-badge status-macro';
+    statusText.textContent = 'Macro gate — entries paused';
+  } else if (!marketOpen) {
+    badge.className = 'status-badge';
+    badge.style.background = '#1c2128';
+    badge.style.color = '#8b949e';
+    badge.style.border = '1px solid #30363d';
+    const nextOpen = day === 0 ? 'Mon' : day === 6 ? 'Mon' : day === 5 && timeVal > 960 ? 'Mon' : 'today';
+    statusText.textContent = isWeekday ? 'Market closed' : 'Weekend — market closed';
+  } else {
+    badge.className = 'status-badge status-active';
+    statusText.textContent = 'Trading active';
+  }
+
+  // Last run
+  if (data.last_run) document.getElementById('lastRun').textContent = 'Last pipeline: ' + data.last_run;
+
+  // Metrics
+  const p = data.portfolio || {};
+  const retPct = p.return_pct || 0;
+  const cashPct = p.total_value ? Math.round(p.cash / p.total_value * 100) : 0;
+  const maxPos = 12;
+
+  document.getElementById('mPortfolio').innerHTML =
+    `<span class="${retPct >= 0 ? 'green' : 'red'}">${fmt$(p.total_value||0)}</span>`;
+  document.getElementById('mReturn').textContent = fmtPct(retPct) + ' all time';
+  document.getElementById('mCash').textContent = fmt$(p.cash||0);
+  document.getElementById('mCashPct').textContent = cashPct + '% of portfolio';
+
+  const wr = data.perf?.win_rate || 0;
+  document.getElementById('mWinRate').innerHTML =
+    `<span class="${wr >= 0.5 ? 'green' : wr >= 0.4 ? 'yellow' : 'red'}">${data.perf?.win_rate_pct||'N/A'}</span>`;
+  document.getElementById('mVerified').textContent =
+    `${data.perf?.correct||0}/${data.perf?.verified||0} verified`;
+
+  document.getElementById('mPositions').textContent = p.open_count || 0;
+  document.getElementById('mSlots').textContent = `${p.open_count||0}/${maxPos} slots used`;
+  document.getElementById('mVectors').textContent = (data.qdrant_count||0).toLocaleString();
+  document.getElementById('mSignals24').textContent = `+${data.signals_24h||0} today`;
+
+  // P&L chart
+  const snaps = data.snapshots || [];
+  const pnlLabels = snaps.map(s => s.date);
+  const pnlVals   = snaps.map(s => s.total_value);
+  if (pnlChartInst) pnlChartInst.destroy();
+  pnlChartInst = new Chart(document.getElementById('pnlChart'), {
+    type: 'line',
+    data: {
+      labels: pnlLabels,
+      datasets: [
+        {
+          label: 'Portfolio',
+          data: pnlVals,
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.08)',
+          fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2
+        },
+        {
+          label: 'Baseline',
+          data: pnlLabels.map(() => 50000),
+          borderColor: '#30363d',
+          borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 8 },
+             grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e', font: { size: 10 },
+                      callback: v => fmtK(v) },
+             grid: { color: '#21262d' } }
+      }
+    }
+  });
+
+  // Win rate chart — weekly buckets from predictions
+  const preds = data.predictions || [];
+  const weekBuckets = {};
+  preds.forEach(p => {
+    const d = new Date(p.created_at);
+    const week = 'W' + Math.ceil((d - new Date('2026-05-18')) / (7*86400000));
+    if (!weekBuckets[week]) weekBuckets[week] = {correct:0, verified:0};
+    if (p.was_correct !== null) {
+      weekBuckets[week].verified++;
+      if (p.was_correct === 1) weekBuckets[week].correct++;
+    }
+  });
+  const wkLabels = Object.keys(weekBuckets).sort();
+  const wkRates  = wkLabels.map(w => weekBuckets[w].verified > 0
+    ? Math.round(weekBuckets[w].correct / weekBuckets[w].verified * 100) : null);
+
+  if (winChartInst) winChartInst.destroy();
+  winChartInst = new Chart(document.getElementById('winChart'), {
+    type: 'line',
+    data: {
+      labels: wkLabels,
+      datasets: [
+        {
+          label: 'Win rate',
+          data: wkRates,
+          borderColor: '#f85149',
+          backgroundColor: 'rgba(248,81,73,0.08)',
+          fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
+          spanGaps: true
+        },
+        {
+          label: '50% target',
+          data: wkLabels.map(() => 50),
+          borderColor: '#30363d',
+          borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 } },
+             grid: { color: '#21262d' } },
+        y: { min: 0, max: 100,
+             ticks: { color: '#8b949e', font: { size: 10 },
+                      callback: v => v + '%' },
+             grid: { color: '#21262d' } }
+      }
+    }
+  });
+
+  // Positions table
+  const positions = data.positions || [];
+  const posBody = document.getElementById('positionsBody');
+  if (!positions.length) {
+    posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
+  } else {
+    posBody.innerHTML = positions.map(p => {
+      const pnl = p.unrealized_pct || 0;
+      const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
+      const tiers = p.tiers_triggered || 0;
+      const tierBadge = tiers > 0
+        ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
+        : '—';
+      return `<tr>
+        <td style="font-weight:600">${p.ticker}</td>
+        <td class="gray">${p.sector||'—'}</td>
+        <td>${p.shares}</td>
+        <td style="text-align:right">${fmt$(p.entry_price)}</td>
+        <td style="text-align:right" class="${pnlCls}">${fmtPct(pnl)}</td>
+        <td style="text-align:right" class="gray">${fmt$(p.stop_loss)}</td>
+        <td style="text-align:center">${tierBadge}</td>
+        <td style="text-align:right" class="gray">${p.hold_days||0}d</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Sector donut
+  const positionsBySector = {};
+  positions.forEach(p => {
+    const s = p.sector || 'other';
+    positionsBySector[s] = (positionsBySector[s] || 0) + (p.current_value || 0);
+  });
+  const cashVal = data.portfolio?.cash || 0;
+  const sectorLabels = [...Object.keys(positionsBySector), 'Cash'];
+  const sectorVals   = [...Object.values(positionsBySector), cashVal];
+  const sectorColors = SECTOR_COLORS.slice(0, sectorLabels.length - 1).concat(['#21262d']);
+
+  if (sectorChartInst) sectorChartInst.destroy();
+  sectorChartInst = new Chart(document.getElementById('sectorChart'), {
+    type: 'doughnut',
+    data: {
+      labels: sectorLabels,
+      datasets: [{ data: sectorVals, backgroundColor: sectorColors, borderWidth: 0 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '65%',
+      plugins: { legend: { display: false } }
+    }
+  });
+  document.getElementById('sectorLegend').innerHTML = sectorLabels.map((s, i) =>
+    `<span style="display:flex;align-items:center;gap:6px">
+      <span style="width:8px;height:8px;border-radius:2px;background:${sectorColors[i]};flex-shrink:0"></span>
+      <span style="color:#8b949e">${s}</span>
+      <span style="color:#e6edf3;margin-left:auto">${fmtK(sectorVals[i])}</span>
+    </span>`
+  ).join('');
+
+  // Today\'s predictions
+  const now = new Date();
+  const todayPreds = preds.filter(p => {
+    const d = new Date(p.created_at);
+    return (now - d) / 36e5 <= 24;
+  });
+  const todayEl = document.getElementById('todayPreds');
+  if (!todayPreds.length) {
+    todayEl.innerHTML = '<div class="gray" style="font-size:12px">No predictions in last 24h</div>';
+  } else {
+    todayEl.innerHTML = todayPreds.map(p => {
+      const status = p.was_correct === 1 ? '<span class="correct">✓</span>'
+                   : p.was_correct === 0 ? '<span class="wrong">✗</span>'
+                   : p.expires_in > 0 ? `<span class="gray">⏱${p.expires_in}h</span>`
+                   : '<span class="gray">⏳</span>';
+      const sector = p.query.replace(/—.*/,'').replace('sector outlook','').trim();
+      return `<div class="pred-card">
+        <div class="pred-sector">${sector}</div>
+        <div class="pred-row">
+          ${dirBadge(p.direction)}
+          <span class="gray">${Math.round(p.confidence*100)}% conf</span>
+          ${status}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Prediction history
+  document.getElementById('predsHistorySummary').textContent =
+    `Show history (${preds.length} total)`;
+  document.getElementById('predsHistoryBody').innerHTML =
+    [...preds].reverse().map(p =>
+      `<tr>
+        <td class="gray">${p.id}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.query}</td>
+        <td>${dirBadge(p.direction)}</td>
+        <td style="text-align:right">${Math.round(p.confidence*100)}%</td>
+        <td class="${p.was_correct===1?'correct':p.was_correct===0?'wrong':'pending'}">
+          ${p.was_correct===1?'✓ Correct':p.was_correct===0?'✗ Wrong':p.expires_in>0?'⏱ '+p.expires_in+'h':'⏳'}
+        </td>
+        <td class="timestamp">${p.created_at}</td>
+      </tr>`
+    ).join('');
+
+  // Activity feed from closed positions
+  const closed = data.closed_positions || [];
+  const actEl = document.getElementById('activityFeed');
+  if (!closed.length) {
+    actEl.innerHTML = '<div class="gray" style="font-size:12px">No recent activity</div>';
+  } else {
+    actEl.innerHTML = closed.slice(0,8).map(c => {
+      const isWin = c.pnl > 0;
+      const reasonShort = c.reason?.includes('profit') ? 'PROFIT'
+                        : c.reason?.includes('stop')   ? 'STOP'
+                        : c.reason?.includes('time')   ? 'TIME'
+                        : 'EXIT';
+      return `<div class="activity-item">
+        <span class="${isWin?'green':'red'}" style="font-weight:600">${reasonShort} ${c.ticker}</span>
+        <span class="${isWin?'green':'red'}">${isWin?'+':''}${fmt$(c.pnl)} (${fmtPct(c.pnl_pct)})</span>
+        <span class="gray">${c.date}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Sector bars
+  const sectors = data.top_sectors || [];
+  const maxSector = Math.max(...sectors.map(s => s.count), 1);
+  document.getElementById('sectorBars').innerHTML = sectors.map(s => {
+    const w = Math.round(s.count / maxSector * 100);
+    const col = s.bias === 'bullish' ? '#3fb950' : s.bias === 'bearish' ? '#f85149' : '#8b949e';
+    return `<div class="sector-bar">
+      <span class="sector-name">${s.sector}</span>
+      <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
+      <span class="sector-count">${s.count}</span>
+    </div>`;
+  }).join('');
+
+  // Ticker bars
+  const tickers = data.top_tickers || [];
+  const maxTicker = Math.max(...tickers.map(t => t.count), 1);
+  document.getElementById('tickerBars').innerHTML = tickers.map(t => {
+    const w = Math.round(t.count / maxTicker * 100);
+    const col = t.bias === 'bullish' ? '#3fb950' : t.bias === 'bearish' ? '#f85149' : '#8b949e';
+    return `<div class="sector-bar">
+      <span class="sector-name" style="font-weight:600">${t.ticker}</span>
+      <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
+      <span class="sector-count">${t.count}</span>
+    </div>`;
+  }).join('');
+
+  // Sentiment donut
+  const sent = data.sentiment || {};
+  if (sentChartInst) sentChartInst.destroy();
+  sentChartInst = new Chart(document.getElementById('sentChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Bullish', 'Bearish', 'Neutral'],
+      datasets: [{
+        data: [sent.bullish||0, sent.bearish||0, sent.neutral||0],
+        backgroundColor: ['#3fb950', '#f85149', '#30363d'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '60%',
+      plugins: {
+        legend: {
+          display: true, position: 'right',
+          labels: { color: '#8b949e', font: { size: 11 }, boxWidth: 10, padding: 8 }
+        }
+      }
+    }
+  });
+
+  // Closed positions table
+  document.getElementById('closedBody').innerHTML = closed.length
+    ? closed.map(c => `<tr>
+        <td style="font-weight:600">${c.ticker}</td>
+        <td style="text-align:right">${fmt$(c.entry)}</td>
+        <td style="text-align:right">${fmt$(c.exit)}</td>
+        <td style="text-align:right" class="${c.pnl>=0?'green':'red'}">${c.pnl>=0?'+':''}${fmt$(c.pnl)}</td>
+        <td class="gray" style="font-size:11px">${c.reason?.split(' ')[0]||'—'}</td>
+        <td class="timestamp">${c.date}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>';
+}
+
+// Drag and drop
+let dragSrc = null;
+function initDrag() {
+  document.querySelectorAll('.card').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      dragSrc = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.id);
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('.card').forEach(c => c.classList.remove('drag-over'));
+      saveLayout();
+    });
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragSrc && dragSrc !== card) card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (dragSrc && dragSrc !== card) {
+        const parent = card.parentNode;
+        const srcParent = dragSrc.parentNode;
+        if (parent === srcParent) {
+          const cards = [...parent.children];
+          const srcIdx = cards.indexOf(dragSrc);
+          const dstIdx = cards.indexOf(card);
+          if (srcIdx < dstIdx) parent.insertBefore(dragSrc, card.nextSibling);
+          else parent.insertBefore(dragSrc, card);
+        } else {
+          const srcNext = dragSrc.nextSibling;
+          parent.insertBefore(dragSrc, card);
+          if (srcNext) srcParent.insertBefore(card, srcNext);
+          else srcParent.appendChild(card);
+        }
+        saveLayout();
+      }
+    });
+  });
+}
+
+function saveLayout() {
+  const layout = {};
+  document.querySelectorAll('[id^="row"]').forEach(row => {
+    layout[row.id] = [...row.querySelectorAll('.card')].map(c => c.id);
+  });
+  localStorage.setItem('tradingDashLayout', JSON.stringify(layout));
+}
+
+function restoreLayout() {
+  try {
+    const saved = localStorage.getItem('tradingDashLayout');
+    if (!saved) return;
+    const layout = JSON.parse(saved);
+    Object.entries(layout).forEach(([rowId, cardIds]) => {
+      const row = document.getElementById(rowId);
+      if (!row) return;
+      cardIds.forEach(cardId => {
+        const card = document.getElementById(cardId);
+        if (card) row.appendChild(card);
+      });
+    });
+  } catch(e) {}
+}
+
+restoreLayout();
+initDrag();
+loadData();
 </script>
 </body>
 </html>'''
@@ -652,6 +1001,26 @@ def api_data():
         data['positions'] = []
         data['recommendations'] = []
         data['closed_positions'] = []
+
+    # Portfolio snapshots for P&L chart
+    try:
+        port_conn = init_portfolio_db()
+        snaps = port_conn.execute("""
+            SELECT snapshot_at, total_value
+            FROM portfolio_snapshots
+            ORDER BY snapshot_at ASC
+        """).fetchall()
+        port_conn.close()
+        daily = {}
+        for snap_at, total in snaps:
+            day = snap_at[:10]
+            daily[day] = round(total, 2)
+        data['snapshots'] = [
+            {'date': d, 'total_value': v}
+            for d, v in sorted(daily.items())
+        ]
+    except Exception as e:
+        data['snapshots'] = []
 
     return jsonify(data)
 
