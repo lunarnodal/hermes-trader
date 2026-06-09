@@ -58,7 +58,7 @@ def is_drawdown_breaker(conn) -> bool:
     # Get portfolio snapshots from last 5 days
     rows = conn.execute("""
         SELECT total_value FROM portfolio_snapshots
-        ORDER BY timestamp DESC LIMIT 5
+        ORDER BY snapshot_at DESC LIMIT 5
     """).fetchall()
     if len(rows) < 2:
         return False
@@ -78,7 +78,8 @@ def is_macro_bearish() -> bool:
     try:
         import sqlite3 as _sql
         from pathlib import Path as _Path
-        _db = _Path(__file__).parent.parent / "data" / "paper_trading.db"
+        _db = _Path(os.environ.get("PAPER_DB_PATH",
+                   "/home/trading/trading-ai/data/paper_trading.db"))
         _conn = _sql.connect(_db)
         row = _conn.execute("""
             SELECT direction, confidence FROM predictions
