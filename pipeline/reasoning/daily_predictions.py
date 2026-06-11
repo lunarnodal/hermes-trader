@@ -98,6 +98,14 @@ def run_daily_predictions() -> None:
     log.info("═══ Daily predictions starting ═══")
     log.info(f"    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
+    # Print calibration report each morning
+    try:
+        from reasoning.calibration import get_calibration_report
+        for line in get_calibration_report().splitlines():
+            log.info(line)
+    except Exception as e:
+        log.warning(f"Calibration report error: {e}")
+
     results = []
     for q in DAILY_QUERIES:
         log.info(f"── Predicting: {q['label']} ──")
