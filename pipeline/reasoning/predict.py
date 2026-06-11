@@ -20,12 +20,12 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tickers.taxonomy import sectors_for_query, normalize_sectors
 
-SPARK_OLLAMA  = os.getenv("SPARK_OLLAMA_HOST", "http://172.29.11.225:11434")
+SPARK_LLAMA   = os.getenv("SPARK_LLAMA_HOST", "http://172.29.11.225:8080")
 OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
 QDRANT_HOST   = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT   = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION    = os.getenv("QDRANT_COLLECTION", "trading_signals")
-REASONING_MODEL = "deepseek-r1:70b"
+REASONING_MODEL = os.getenv("REASONING_MODEL", "deepseek-r1")  # llama-server ignores the value but keep it
 EMBED_MODEL   = "bge-m3"
 
 logging.basicConfig(
@@ -37,6 +37,13 @@ logging.basicConfig(
     ]
 )
 log = logging.getLogger(__name__)
+
+try:
+    from reasoning.calibration import calibrate_confidence
+    CALIBRATION_ENABLED = True
+except ImportError:
+    CALIBRATION_ENABLED = False
+    log.warning("Calibration module not available")
 
 REASONING_SYSTEM = """You are a disciplined financial market analyst combining
 sentiment signal analysis with evidence-based investing principles.
@@ -253,12 +260,34 @@ Based on these signals, provide your reasoning and prediction."""
 
     # Call DeepSeek on Spark
     log.info("Calling DeepSeek-R1-70B for reasoning...")
+# BEFORE
+#    resp = requests.post(
+#        f"{SPARK_OLLAMA}/api/chat",
+#        json={
+#            "model": REASONING_MODEL,
+#            "stream": False,
+#            "options": {"temperature": 0.1, "num_predict": 8192},
+#            "messages": [
+#                {"role": "system", "content": REASONING_SYSTEM},
+#                {"role": "user",   "content": user_prompt}
+#            ]
+#        },
+#        timeout=600
+#    )
+#    resp.raise_for_status()
+#
+#    raw      = resp.json()
+#    content  = raw["message"]["content"].strip()
+#    thinking = raw["message"].get("thinking", "")
+
+# AFTER
     resp = requests.post(
-        f"{SPARK_OLLAMA}/api/chat",
+        f"{SPARK_LLAMA}/v1/chat/completions",
         json={
             "model": REASONING_MODEL,
             "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 8192},
+            "temperature": 0.1,
+            "max_tokens": 8192,
             "messages": [
                 {"role": "system", "content": REASONING_SYSTEM},
                 {"role": "user",   "content": user_prompt}
@@ -269,8 +298,10 @@ Based on these signals, provide your reasoning and prediction."""
     resp.raise_for_status()
 
     raw      = resp.json()
-    content  = raw["message"]["content"].strip()
-    thinking = raw["message"].get("thinking", "")
+    msg      = raw["choices"][0]["message"]
+    content  = (msg.get("content") or "").strip()
+    thinking = msg.get("reasoning_content", "")
+
 
     log.info(f"Response: {len(content)} chars, {len(thinking)} thinking chars")
 
@@ -291,6 +322,18 @@ Based on these signals, provide your reasoning and prediction."""
             except Exception as e:
                 log.debug(f"Could not parse {marker} block: {e}")
                 continue
+
+    # Apply sector calibration to confidence score
+    if CALIBRATION_ENABLED and prediction:
+        raw_conf = prediction.get("confidence", 0.65)
+        cal_conf, cal_explanation = calibrate_confidence(query, 
+                                        prediction.get("direction", "neutral"),
+                                        raw_conf)
+        if cal_conf != raw_conf:
+            prediction["confidence"]            = cal_conf
+            prediction["probability"]           = cal_conf
+            prediction["calibration_applied"]   = cal_explanation
+            log.info(f"Calibrated: {cal_explanation}")
 
     return {
         "query":      query,
