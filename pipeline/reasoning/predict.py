@@ -45,6 +45,13 @@ except ImportError:
     CALIBRATION_ENABLED = False
     log.warning("Calibration module not available")
 
+try:
+    from reasoning.signal_graph import enrich_signals
+    SIGNAL_GRAPH_ENABLED = True
+except ImportError:
+    SIGNAL_GRAPH_ENABLED = False
+    log.warning("Signal graph module not available")
+
 REASONING_SYSTEM = """You are a disciplined financial market analyst combining
 sentiment signal analysis with evidence-based investing principles.
 
@@ -248,6 +255,27 @@ def run_prediction(query: str, timeframe: str = "24h",
         return {"error": "No relevant signals found"}
 
     log.info(f"Found {len(signals)} relevant signals")
+
+    # Enrich with indirect signals from dependency graph
+    if SIGNAL_GRAPH_ENABLED and signals:
+        # Extract sector from query for targeted enrichment
+        query_lower = query.lower()
+        target_sector = None
+        for sector, keywords in [
+            ('technology', ['technology', 'semiconductor', 'ai']),
+            ('healthcare', ['healthcare', 'biotech']),
+            ('energy', ['energy', 'oil']),
+            ('financials', ['financial', 'bank']),
+            ('real_estate', ['real estate', 'reit']),
+            ('consumer', ['consumer', 'retail']),
+            ('industrials', ['industrial', 'defense']),
+            ('materials', ['materials', 'mining']),
+        ]:
+            if any(kw in query_lower for kw in keywords):
+                target_sector = sector
+                break
+        signals = enrich_signals(signals, target_sector=target_sector)
+        log.info(f"After enrichment: {len(signals)} total signals")
 
     # Format context
     signal_context = format_signals_for_reasoning(signals)

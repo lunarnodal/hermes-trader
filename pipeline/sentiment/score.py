@@ -58,12 +58,13 @@ Required fields:
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
+- macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
 - summary: max 2 sentence plain English summary of market impact
 
 {rules_text}
 
 Example output:
-{{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}}
+{{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","macro_themes":["earnings_miss"],"summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}}
 """
 
 
@@ -77,6 +78,7 @@ Required fields:
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
+- macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
 - summary: max 2 sentence plain English summary of market impact
 
 SECTOR INFERENCE RULES — always apply these cross-sector inferences:
@@ -101,7 +103,7 @@ SECTOR INFERENCE RULES — always apply these cross-sector inferences:
 - Power grid, electricity demand, energy infrastructure attacks → always add "utilities", "energy", "ai_infrastructure", "data_center"
 
 Example output:
-{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}
+{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","macro_themes":["earnings_miss"],"summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}
 
 Example with cross-sector inference:
 {"sentiment":"bearish","confidence":0.78,"tickers":[],"sectors":["geopolitical","energy","oil_gas","defense","commodities"],"event_type":"geopolitical","summary":"Military strikes escalate regional conflict. Energy supply disruption risk elevated, defense sector demand increases."}"""
@@ -161,6 +163,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             scored.setdefault("tickers", [])
             scored.setdefault("sectors", [])
             scored.setdefault("event_type", "other")
+            scored.setdefault("macro_themes", [])
             scored.setdefault("summary", "")
             return scored
 
@@ -249,6 +252,7 @@ def process_queue(queue_file: Path) -> Path | None:
             "tickers":    enhanced_tickers,
             "sectors":    normalize_sectors(score.get("sectors", [])),
             "event_type":  score.get("event_type", "other"),
+            "macro_themes": score.get("macro_themes", []),
             "summary":     score.get("summary", ""),
             "confidence":  score.get("confidence", 0.65),
             "sentiment":   score.get("sentiment", "neutral"),
