@@ -48,6 +48,19 @@ def get_system_prompt() -> str:
     seed_static_rules(conn)
     rules_text = build_prompt_rules(conn)
     conn.close()
+
+    # Load macro themes dynamically from taxonomy file
+    try:
+        _taxonomy_path = Path(__file__).parent.parent / "data" / "theme_taxonomy.json"
+        _taxonomy = json.loads(_taxonomy_path.read_text())
+        _theme_list = []
+        for _cat, _themes in _taxonomy.items():
+            if _cat != 'discovered':
+                _theme_list.extend(_themes[:8])
+        _theme_sample = ', '.join(_theme_list[:80])
+    except Exception:
+        _theme_sample = 'interest_rate_increase, oil_price_increase, earnings_beat, geopolitical_tension, ipo_listing'
+
     return f"""You are a financial news sentiment analyst.
 Analyze the headline and summary provided and return ONLY a JSON object.
 No explanation, no markdown, no preamble. Only the JSON object.
@@ -57,8 +70,8 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
-- macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "other"
+- macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
 - summary: max 2 sentence plain English summary of market impact
 
 {rules_text}
@@ -77,7 +90,7 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "product", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "other"
 - macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
 - summary: max 2 sentence plain English summary of market impact
 
@@ -117,6 +130,26 @@ def build_prompt(article: dict) -> str:
 
 
 # ─── Ollama ───────────────────────────────────────────────────────────────────
+
+def _save_new_themes(new_themes: list[str]) -> None:
+    """Save newly proposed themes to the taxonomy file"""
+    import json as _json
+    taxonomy_path = Path(__file__).parent.parent / "data" / "theme_taxonomy.json"
+    try:
+        taxonomy = _json.loads(taxonomy_path.read_text())
+        added = []
+        discovered = taxonomy.setdefault("discovered", [])
+        for theme in new_themes:
+            theme = theme.strip().lower().replace(' ', '_')
+            if theme and theme not in discovered:
+                discovered.append(theme)
+                added.append(theme)
+        if added:
+            taxonomy_path.write_text(_json.dumps(taxonomy, indent=2))
+            log.info(f"New themes discovered and saved: {added}")
+    except Exception as e:
+        log.warning(f"Could not save new themes: {e}")
+
 
 def score_article(article: dict, retries: int = 2) -> dict | None:
     payload = {
@@ -165,6 +198,34 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             scored.setdefault("event_type", "other")
             scored.setdefault("macro_themes", [])
             scored.setdefault("summary", "")
+
+            # Auto-save any new themes proposed by the model
+            themes = scored.get("macro_themes", [])
+            # Collect themes with "new:" prefix AND unknown themes not in taxonomy
+            try:
+                import json as _json
+                _tax = _json.loads(
+                    (Path(__file__).parent.parent / "data" / "theme_taxonomy.json").read_text()
+                )
+                _known = {t for v in _tax.values() for t in (v if isinstance(v, list) else [])}
+            except:
+                _known = set()
+
+            new_themes = []
+            for t in themes:
+                if t.startswith("new:"):
+                    new_themes.append(t[4:])
+                elif t not in _known and len(t) >= 2:
+                    new_themes.append(t)  # unknown theme — save it
+
+            if new_themes:
+                _save_new_themes(new_themes)
+
+            # Clean the new: prefix from stored themes
+            scored["macro_themes"] = [
+                t[4:] if t.startswith("new:") else t for t in themes
+            ]
+
             return scored
 
         except (json.JSONDecodeError, AssertionError) as e:
