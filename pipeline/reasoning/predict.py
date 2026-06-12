@@ -215,7 +215,7 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
                 ev_conn.close()
             except Exception:
                 pass
-        lines.append(f"{sentiment_icon} {s['sentiment'].upper()} | conf={s['confidence']:.2f} | rel={s['score']:.3f} | {s['source']}{risk_flag}")
+        lines.append(f"{sentiment_icon} {s['sentiment'].upper()} | conf={s['confidence']:.2f} | rel={s.get('score', 0.0):.3f} | {s['source']}{risk_flag}")
         lines.append(f"  TITLE: {s['title']}")
         if s.get("tickers"):
             lines.append(f"  TICKERS: {', '.join(s['tickers'])}")
