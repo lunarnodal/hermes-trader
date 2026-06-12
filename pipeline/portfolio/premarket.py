@@ -23,6 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 log = logging.getLogger(__name__)
 
+try:
+    from feeds.finnhub_enrichment import get_gap_context
+    ENRICHMENT_ENABLED = True
+except ImportError:
+    ENRICHMENT_ENABLED = False
+    log.warning("Finnhub enrichment not available")
+
 YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 
 # Gap thresholds
@@ -151,11 +158,39 @@ def check_premarket_gaps(execute: bool = False) -> list[dict]:
 
         gap_events.append(event)
 
-        # Auto-exit if gap exceeds threshold
-        if execute and severity in ("EXIT", "URGENT"):
+        # Use enrichment to classify gap — company-specific vs market-wide
+        gap_context = None
+        if ENRICHMENT_ENABLED and severity in ("EXIT", "URGENT", "WARN"):
+            try:
+                gap_context = get_gap_context(ticker, gap_pct, eff_price)
+                event['gap_context'] = gap_context
+                log.info(
+                    f"  Gap context {ticker}: {gap_context['recommendation']} "
+                    f"(exit={gap_context['exit_signals']}, "
+                    f"hold={gap_context['hold_signals']})"
+                )
+                for reason in gap_context['reasons']:
+                    log.info(f"    → {reason}")
+            except Exception as e:
+                log.warning(f"  Enrichment failed for {ticker}: {e}")
+
+        # Auto-exit decision — use enrichment if available
+        should_exit = False
+        if severity in ("EXIT", "URGENT"):
+            if gap_context:
+                # Smart exit — use analyst/earnings context
+                should_exit = gap_context['recommendation'] == 'exit'
+                if not should_exit:
+                    log.info(f"  HOLD {ticker}: gap {data['gap_pct_display']} "
+                             f"but enrichment suggests {gap_context['recommendation']}")
+            else:
+                # No enrichment — fall back to threshold
+                should_exit = True
+
+        if execute and should_exit:
             log.warning(
                 f"  AUTO-EXIT {ticker}: gap {data['gap_pct_display']} "
-                f"exceeds {EXIT_THRESHOLD*100:.0f}% threshold"
+                f"— enrichment confirms exit"
             )
             try:
                 now = datetime.now(timezone.utc).isoformat()

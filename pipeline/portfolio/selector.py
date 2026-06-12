@@ -18,6 +18,17 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 import sys
+
+try:
+    import sys as _sys
+    import os as _os
+    _sys.path.insert(0, str(Path(__file__).parent.parent))
+    from feeds.finnhub_enrichment import get_full_enrichment
+    ENRICHMENT_ENABLED = True
+except Exception:
+    ENRICHMENT_ENABLED = False
+    def get_full_enrichment(ticker, **kw):
+        return {"score": 0.0, "signal": "neutral", "reasons": []}
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 OLLAMA_HOST  = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
@@ -112,13 +123,24 @@ def score_ticker(ticker: str, signals: list[dict]) -> dict:
 
     avg_recency = sum(recency_scores) / len(recency_scores)
 
+    # Enrichment boost from Finnhub analyst ratings + earnings
+    enrichment_boost = 0.0
+    if ENRICHMENT_ENABLED:
+        try:
+            _enrich = get_full_enrichment(ticker)
+            enrichment_boost = _enrich["score"] * 0.3
+        except Exception:
+            pass
+
     # Composite score
     sentiment_score = (bull - bear) / len(ticker_signals)  # -1 to +1
-    composite = (
+    # Blend signal score (70%) with analyst enrichment (30%)
+    signal_composite = (
         sentiment_score * 0.4 +
         avg_conf        * 0.4 +
         avg_recency     * 0.2
     )
+    composite = signal_composite * 0.7 + enrichment_boost
 
     return {
         "ticker":       ticker,
