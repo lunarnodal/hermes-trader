@@ -231,8 +231,9 @@ def get_lessons_data(since: datetime) -> dict:
         deps = conn.execute("""
             SELECT from_entity, to_entity, relationship, occurrences
             FROM indirect_dependencies
-            ORDER BY occurrences DESC LIMIT 10
-        """).fetchall()
+            WHERE last_seen >= ?
+            ORDER BY last_seen DESC LIMIT 10
+        """, (since.isoformat(),)).fetchall()
 
         conn.close()
         return {
