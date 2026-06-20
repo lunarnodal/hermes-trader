@@ -78,21 +78,19 @@ DAILY_QUERIES = [
 
 
 def run_daily_predictions() -> None:
-    # Skip weekends and market holidays
-    # Server is America/New_York so datetime.now() is ET directly
-    from datetime import date
-    MARKET_HOLIDAYS_2026 = {
-        date(2026, 1,  1), date(2026, 1, 19), date(2026, 2, 16),
-        date(2026, 4,  3), date(2026, 5, 25), date(2026, 7,  3),
-        date(2026, 9,  7), date(2026, 11, 26), date(2026, 11, 27),
-        date(2026, 12, 25),
-    }
+    # Skip weekends and market holidays — uses shared market_calendar module
+    try:
+        from portfolio.market_calendar import is_trading_day, get_holiday_name
+    except ImportError:
+        from market_calendar import is_trading_day, get_holiday_name
+
     now = datetime.now()
-    if now.weekday() >= 5:
-        log.info(f"Skipping daily predictions — weekend ({now.strftime('%A')})")
-        return
-    if date.today() in MARKET_HOLIDAYS_2026:
-        log.info(f"Skipping daily predictions — market holiday ({date.today()})")
+    if not is_trading_day():
+        holiday_name = get_holiday_name()
+        if holiday_name:
+            log.info(f"Skipping daily predictions — market holiday ({holiday_name})")
+        else:
+            log.info(f"Skipping daily predictions — weekend ({now.strftime('%A')})")
         return
 
     log.info("═══ Daily predictions starting ═══")

@@ -89,6 +89,12 @@ def fetch_premarket_price(ticker: str) -> dict | None:
         return None
 
 
+try:
+    from portfolio.market_calendar import is_trading_day, get_holiday_name
+except ImportError:
+    from market_calendar import is_trading_day, get_holiday_name
+
+
 def check_premarket_gaps(execute: bool = False) -> list[dict]:
     """
     Check all open positions for pre-market gaps.
@@ -104,6 +110,12 @@ def check_premarket_gaps(execute: bool = False) -> list[dict]:
     if not positions:
         log.info("No open positions to check")
         port_conn.close()
+        return []
+
+    if not is_trading_day():
+        holiday_name = get_holiday_name()
+        reason = holiday_name if holiday_name else "weekend"
+        log.warning(f"Market closed today ({reason}) — skipping pre-market check")
         return []
 
     log.info(f"Pre-market gap check: {len(positions)} positions")

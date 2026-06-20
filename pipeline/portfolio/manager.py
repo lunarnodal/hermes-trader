@@ -49,6 +49,12 @@ MARKET_HOLIDAYS_2026 = {
 }
 
 
+try:
+    from portfolio.market_calendar import is_trading_day, get_holiday_name
+except ImportError:
+    from market_calendar import is_trading_day, get_holiday_name
+
+
 def is_drawdown_breaker(conn) -> bool:
     """Return True if portfolio has dropped >2% in last 5 trading days"""
     if not CONFIG.get("drawdown_circuit_breaker_pct"):
