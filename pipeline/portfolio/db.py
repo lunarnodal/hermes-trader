@@ -265,11 +265,17 @@ def get_portfolio_value(conn: sqlite3.Connection) -> float:
 
 
 def positions_this_week(conn: sqlite3.Connection) -> int:
-    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    """Count BUY trades since Monday 00:00 ET (calendar week reset)"""
+    now = datetime.now(timezone.utc)
+    # Find most recent Monday midnight UTC
+    days_since_monday = now.weekday()  # Mon=0, Sun=6
+    monday_midnight = (now - timedelta(days=days_since_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     return conn.execute("""
         SELECT COUNT(*) FROM transactions
         WHERE action = 'BUY' AND timestamp >= ?
-    """, (week_ago,)).fetchone()[0]
+    """, (monday_midnight.isoformat(),)).fetchone()[0]
 
 
 # ─── Position sizing ──────────────────────────────────────────────────────────
