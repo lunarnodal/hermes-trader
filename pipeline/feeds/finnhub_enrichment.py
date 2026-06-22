@@ -321,7 +321,7 @@ def get_full_enrichment(ticker: str,
     Returns a unified enrichment dict.
     """
     ratings  = get_analyst_ratings(ticker)
-    target   = get_price_target(ticker, current_price)
+    target   = None  # price target requires paid Finnhub tier — disabled
     earnings = get_earnings_surprise(ticker)
 
     # Calculate enrichment score (-1.0 to +1.0)
@@ -385,7 +385,7 @@ def get_gap_context(ticker: str,
     
     Returns recommendation: 'exit', 'hold', 'monitor'
     """
-    enrichment = get_full_enrichment(ticker, current_price)
+    enrichment = get_full_enrichment(ticker)
     ratings    = enrichment.get("ratings")
     earnings   = enrichment.get("earnings")
 
