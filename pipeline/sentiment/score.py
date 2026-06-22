@@ -25,8 +25,8 @@ from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-OLLAMA_HOST    = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
-OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL", "qwen3:30b")
+LLAMA_URL      = os.getenv("LLAMA_SCORE_URL", "http://localhost:8080/v1/chat/completions")
+LLAMA_MODEL    = os.getenv("LLAMA_SCORE_MODEL", "qwen3")
 TIMESERIES_DIR = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
 DB_PATH        = Path("/mnt/qnap/timeseries/ingestion.db")
 
@@ -153,11 +153,11 @@ def _save_new_themes(new_themes: list[str]) -> None:
 
 def score_article(article: dict, retries: int = 2) -> dict | None:
     payload = {
-        "model":  OLLAMA_MODEL,
+        "model":  LLAMA_MODEL,
         "stream": False,
-        "think":  False,
-        "format": "json",
-        "options": {"temperature": 0.1, "num_predict": 768, "num_ctx": 4096},
+        "temperature": 0.1,
+        "max_tokens": 1024,
+        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system",  "content": get_system_prompt()},
             {"role": "user",    "content": build_prompt(article)},
@@ -167,12 +167,12 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
     for attempt in range(retries + 1):
         try:
             resp = requests.post(
-                f"{OLLAMA_HOST}/api/chat",
+                LLAMA_URL,
                 json=payload,
                 timeout=300
             )
             resp.raise_for_status()
-            raw = resp.json()["message"]["content"].strip()
+            raw = (resp.json()["choices"][0]["message"].get("content") or "").strip()
 
             # Strip thinking tags if model returns them
             if "<think>" in raw:
