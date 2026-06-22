@@ -214,7 +214,7 @@ def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
             # Extract tickers from Bloomberg category tags (NYS:BLK, NMS:NVDA etc)
             bloomberg_tickers = []
             if feed.get("name", name) == "bloomberg-markets":
-                for tag in item.get("tags", []):
+                for tag in entry.get("tags", []):
                     term = tag.get("term", "")
                     if ":" in term:
                         ticker = term.split(":")[-1].strip().upper()

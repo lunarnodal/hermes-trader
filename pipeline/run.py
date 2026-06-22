@@ -47,7 +47,7 @@ def run_pipeline() -> None:
         try:
             from feeds.finnhub_feed import run_finnhub_ingest
             from feeds.marketaux_feed import run_marketaux_ingest
-            from feeds.ingest import DB_PATH, QUEUE_DIR
+            from feeds.ingest import DB_PATH, TIMESERIES_DIR as QUEUE_DIR
             import sqlite3 as _sqlite3
             from portfolio.db import init_db as _init_port, get_open_positions as _get_pos
             _conn = _sqlite3.connect(DB_PATH)
