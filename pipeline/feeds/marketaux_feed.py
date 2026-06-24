@@ -86,10 +86,15 @@ def run_marketaux_ingest(conn: sqlite3.Connection,
                          queue_dir: Path) -> int:
     """
     Main entry point — fetch marketaux news
+    Rate limited to once per hour to stay within free tier (100 req/day)
     Returns number of new articles written to queue
     """
     now     = datetime.now(timezone.utc)
     max_age = timedelta(hours=int(os.getenv("MAX_ARTICLE_AGE_HOURS", 24)))
+
+    # Rate limit — only run at the top of each hour
+    if now.minute != 0:
+        return 0
 
     raw      = fetch_news(limit=50)
     articles = [normalize_article(a) for a in raw]
