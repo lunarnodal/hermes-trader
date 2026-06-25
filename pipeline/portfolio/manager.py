@@ -51,8 +51,12 @@ MARKET_HOLIDAYS_2026 = {
 
 try:
     from portfolio.market_calendar import is_trading_day, get_holiday_name
+    from portfolio.earnings_calendar import has_earnings_risk
+    from portfolio.vix_gate import get_vix_gate
 except ImportError:
     from market_calendar import is_trading_day, get_holiday_name
+    from earnings_calendar import has_earnings_risk
+    from vix_gate import get_vix_gate
 
 
 def is_drawdown_breaker(conn) -> bool:
@@ -300,6 +304,18 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — weekly limit reached ({week_buys} trades)")
             continue
 
+        # VIX volatility gate — reduce or pause based on market fear
+        _vix = get_vix_gate()
+        if _vix['action'] == 'pause':
+            log.warning(f"SKIP {ticker} — {_vix['reason']}")
+            continue
+        elif _vix['action'] == 'reduce':
+            log.info(f"VIX gate: {_vix['reason']}")
+            rec['size_multiplier'] = min(
+                rec.get('size_multiplier', 1.0),
+                _vix['size_multiplier']
+            )
+
         # Macro gate — block all entries if market is broadly bearish
         if is_macro_bearish():
             log.info(f"SKIP {ticker} — macro gate active (market bearish)")
@@ -317,6 +333,18 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — sector breaker active "
                      f"({ticker_sector} has 2+ stop losses this week)")
             continue
+
+        # Earnings calendar gate — skip or reduce if earnings within hold window
+        try:
+            earnings_check = has_earnings_risk(ticker)
+            if earnings_check['action'] == 'skip':
+                log.warning(f"SKIP {ticker} — {earnings_check['reason']}")
+                continue
+            elif earnings_check['action'] == 'reduce':
+                log.warning(f"REDUCE {ticker} — {earnings_check['reason']}")
+                rec['size_multiplier'] = 0.5  # flag for position sizing
+        except Exception as _e:
+            log.warning(f"Earnings check failed for {ticker}: {_e}")
 
         # Check max concurrent open positions
         open_count = len(get_open_positions(conn))

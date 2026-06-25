@@ -334,6 +334,16 @@ async function loadData() {
   const macroP = (data.predictions||[]).find(p =>
     p.query && (p.query.includes('market outlook') || p.query.includes('macro')));
   const circuitBreaker = (data.portfolio?.return_pct || 0) < -2;
+  // VIX gate check
+  const vix = data.vix || {};
+  if (vix.action === 'pause') {
+    badge.className = 'status-badge status-breaker';
+    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — volatility halt`;
+  } else if (vix.action === 'reduce') {
+    badge.className = 'status-badge status-macro';
+    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — reduced size`;
+  }
+
   const nowDt = new Date();
   const day = nowDt.getDay();
   const hour = nowDt.getHours();
@@ -607,6 +617,13 @@ async function loadData() {
     const breaker = breakers[s.sector] || {};
     const paused  = breaker.paused;
     const stops   = breaker.stops || 0;
+    const sectorLabel = s.sector
+      .replace('technology', 'tech')
+      .replace('healthcare', 'health')
+      .replace('financials', 'finance')
+      .replace('industrials', 'industrial')
+      .replace('materials', 'materials')
+      .replace('market_overview', 'macro');
     const statusDot = paused
       ? `<span title="${stops} stop losses this week — entries paused"
            style="display:inline-flex;align-items:center;gap:3px;
@@ -617,7 +634,7 @@ async function loadData() {
            style="display:inline-flex;align-items:center;gap:3px;
                   color:#3fb950;font-size:10px;margin-left:4px;">●</span>`;
     return `<div class="sector-bar">
-      <span class="sector-name" style="width:120px">${s.sector}${statusDot}</span>
+      <span class="sector-name" style="width:110px">${sectorLabel}${statusDot}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
       <span class="sector-count">${s.count}</span>
     </div>`;
@@ -1054,6 +1071,16 @@ def api_data():
         ]
     except Exception as e:
         data['snapshots'] = []
+
+    # VIX volatility gate
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from portfolio.vix_gate import get_vix_gate
+        data['vix'] = get_vix_gate()
+    except Exception as e:
+        data['vix'] = {'vix': None, 'action': 'ok', 'size_multiplier': 1.0,
+                       'reason': 'VIX unavailable'}
 
     return jsonify(data)
 
