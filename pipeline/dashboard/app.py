@@ -53,7 +53,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   .status-breaker{background:#3a1a1a;color:#f85149;border:1px solid #da3633}
   .status-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
   .last-run{font-size:11px;color:#8b949e}
-  .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;padding:16px 20px}
+  .metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:16px 20px}
   .metric{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
   .metric-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
   .metric-value{font-size:22px;font-weight:600}
@@ -148,6 +148,11 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
     <div class="metric-label">Signal vectors</div>
     <div class="metric-value" id="mVectors">—</div>
     <div class="metric-sub" id="mSignals24">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Cash yield (BIL shadow)</div>
+    <div class="metric-value" id="mCashYield">—</div>
+    <div class="metric-sub" id="mCashYieldSub">—</div>
   </div>
 </div>
 
@@ -395,6 +400,14 @@ async function loadData() {
   document.getElementById('mSlots').textContent = `${p.open_count||0}/${maxPos} slots used`;
   document.getElementById('mVectors').textContent = (data.qdrant_count||0).toLocaleString();
   document.getElementById('mSignals24').textContent = `+${data.signals_24h||0} today`;
+
+  const cy = data.cash_yield || {};
+  if (cy.daily_earnings) {
+    document.getElementById('mCashYield').innerHTML =
+      `<span class="green">$${cy.daily_earnings.toFixed(2)}/day</span>`;
+    document.getElementById('mCashYieldSub').textContent =
+      `$${cy.monthly_earnings?.toFixed(0)}/mo · ${cy.annual_yield?.toFixed(2)}% APY`;
+  }
 
   // P&L chart
   const snaps = data.snapshots || [];
@@ -1081,6 +1094,16 @@ def api_data():
     except Exception as e:
         data['vix'] = {'vix': None, 'action': 'ok', 'size_multiplier': 1.0,
                        'reason': 'VIX unavailable'}
+
+    # Shadow BIL cash yield
+    try:
+        from portfolio.cash_yield import get_current_shadow_position
+        from portfolio.db import init_db as _init_port2
+        _pc2 = _init_port2()
+        data['cash_yield'] = get_current_shadow_position(_pc2)
+        _pc2.close()
+    except Exception as e:
+        data['cash_yield'] = {}
 
     return jsonify(data)
 

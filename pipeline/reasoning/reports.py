@@ -275,6 +275,7 @@ Write a comprehensive report with these sections:
 8. Outlook (what to watch for in the coming period)
 
 Be specific with numbers. Be honest about failures. Identify actionable improvements.
+Include a section on idle cash opportunity cost and what BIL/treasury parking would have added.
 Format as clean markdown."""
 
 
@@ -363,6 +364,20 @@ def build_report(period_name: str, since: datetime) -> str:
     log.info(f"Building {period_name} report from {since.date()} to today")
 
     portfolio   = get_portfolio_data(since)
+
+    # Cash yield opportunity cost
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from portfolio.db import init_db as _init_port
+        from portfolio.cash_yield import get_weekly_summary, calculate_shadow_yield
+        _pconn = _init_port()
+        cash_yield_summary = get_weekly_summary(_pconn)
+        cash_yield_data    = calculate_shadow_yield(_pconn, since)
+        _pconn.close()
+    except Exception as e:
+        cash_yield_summary = f"Cash yield tracking unavailable: {e}"
+        cash_yield_data    = {}
     predictions = get_prediction_data(since)
     rules       = get_rules_data(since)
     lessons     = get_lessons_data(since)
@@ -403,6 +418,9 @@ def build_report(period_name: str, since: datetime) -> str:
 
 ### Rules Added This Period
 {chr(10).join(f"- `{r['trigger']}` ({r['source']})" for r in rules['rules_added'])}
+
+### Cash Yield (Shadow BIL Position)
+{cash_yield_summary}
 
 ### Indirect Dependencies Discovered
 {chr(10).join(f"- {d['from']} → {d['to']} ({d['times']}x)" for d in lessons.get('dependencies', []))}
