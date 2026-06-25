@@ -357,19 +357,35 @@ async function loadData() {
   const isWeekday = day >= 1 && day <= 5;
   const isMarketHours = timeVal >= 570 && timeVal <= 960; // 9:30-16:00
   const marketOpen = isWeekday && isMarketHours;
+  // Count paused sectors for display
+  const pausedSectors = Object.entries(breakers)
+    .filter(([s, v]) => v.paused)
+    .map(([s]) => s.replace('technology','tech')
+                   .replace('healthcare','health')
+                   .replace('financials','finance')
+                   .replace('industrials','industrial'));
+
   if (circuitBreaker) {
     badge.className = 'status-badge status-breaker';
-    statusText.textContent = 'Circuit breaker active';
+    statusText.textContent = 'Portfolio down >5% — all entries paused';
   } else if (macroP && macroP.direction === 'bearish' && macroP.confidence >= 0.70) {
     badge.className = 'status-badge status-macro';
-    statusText.textContent = 'Macro gate — entries paused';
+    statusText.textContent = 'Macro bearish — new entries paused';
+  } else if (vix.action === 'pause') {
+    badge.className = 'status-badge status-breaker';
+    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — volatility halt`;
+  } else if (vix.action === 'reduce') {
+    badge.className = 'status-badge status-macro';
+    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — reduced position sizes`;
   } else if (!marketOpen) {
     badge.className = 'status-badge';
     badge.style.background = '#1c2128';
     badge.style.color = '#8b949e';
     badge.style.border = '1px solid #30363d';
-    const nextOpen = day === 0 ? 'Mon' : day === 6 ? 'Mon' : day === 5 && timeVal > 960 ? 'Mon' : 'today';
     statusText.textContent = isWeekday ? 'Market closed' : 'Weekend — market closed';
+  } else if (pausedSectors.length > 0) {
+    badge.className = 'status-badge status-macro';
+    statusText.textContent = `${pausedSectors.join(', ')} paused — rotating sectors`;
   } else {
     badge.className = 'status-badge status-active';
     statusText.textContent = 'Trading active';
