@@ -38,7 +38,8 @@ CONFIG = {
     "max_hold_days":        10,        # re-evaluate after 10 trading days
     "max_new_positions_week": 5,       # max 5 new positions per week — quality over quantity
     "max_open_positions":   12,        # max 12 simultaneous open positions
-    "drawdown_circuit_breaker_pct": 0.02,   # pause entries if portfolio drops >2% in 5 days
+    "drawdown_circuit_breaker_pct": 0.05,   # portfolio freeze only on catastrophic loss (5%+)
+    "sector_breaker_stops": 2,              # pause sector after N stop losses in 7 days
     "macro_gate_enabled": True,             # block entries if market_overview is bearish
     "max_positions_per_sector": {
         "technology":   4,

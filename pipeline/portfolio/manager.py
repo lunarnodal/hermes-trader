@@ -56,23 +56,60 @@ except ImportError:
 
 
 def is_drawdown_breaker(conn) -> bool:
-    """Return True if portfolio has dropped >2% in last 5 trading days"""
+    """
+    Portfolio-level circuit breaker.
+    Only triggers on catastrophic drawdown (5%+) — not minor corrections.
+    Minor drawdowns are handled by sector-specific circuit breakers instead.
+    """
     if not CONFIG.get("drawdown_circuit_breaker_pct"):
         return False
-    threshold = CONFIG["drawdown_circuit_breaker_pct"]
-    starting  = CONFIG["starting_capital"]
-    # Get portfolio snapshots from last 5 days
+
+    # Raise threshold to 5% for portfolio-wide freeze
+    # Sector breakers handle smaller drawdowns more precisely
+    threshold = 0.05
+
     rows = conn.execute("""
         SELECT total_value FROM portfolio_snapshots
-        ORDER BY snapshot_at DESC LIMIT 5
+        ORDER BY snapshot_at DESC LIMIT 10
     """).fetchall()
     if len(rows) < 2:
         return False
-    peak  = max(r[0] for r in rows)
+    peak    = max(r[0] for r in rows)
     current = get_portfolio_value(conn)
     drawdown = (peak - current) / peak
     if drawdown >= threshold:
-        log.warning(f"Circuit breaker: portfolio down {drawdown:.1%} from recent peak ${peak:,.2f}")
+        log.warning(f"Portfolio circuit breaker: down {drawdown:.1%} from peak "
+                    f"${peak:,.2f} — ALL entries paused")
+        return True
+    return False
+
+
+def get_sector_stop_count(conn, sector: str, days: int = 7) -> int:
+    """Count stop loss exits in a sector over the last N days"""
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    row = conn.execute("""
+        SELECT COUNT(*) FROM positions
+        WHERE sector = ?
+          AND status = 'closed'
+          AND exit_reason LIKE 'stop_loss%'
+          AND exit_date >= ?
+    """, (sector, cutoff)).fetchone()
+    return row[0] if row else 0
+
+
+def is_sector_breaker(sector: str, conn) -> bool:
+    """
+    Sector-specific circuit breaker.
+    Pauses entries in a specific sector if it has had 2+ stop losses
+    in the last 7 days. Other sectors remain open for trading.
+
+    This allows rotation — if tech is down, healthcare/energy can still trade.
+    """
+    stop_count = get_sector_stop_count(conn, sector, days=7)
+    if stop_count >= 2:
+        log.warning(f"Sector breaker [{sector}]: {stop_count} stop losses "
+                    f"in last 7 days — pausing {sector} entries")
         return True
     return False
 
@@ -268,9 +305,17 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — macro gate active (market bearish)")
             continue
 
-        # Circuit breaker — block entries if portfolio in drawdown
+        # Portfolio circuit breaker — only triggers on catastrophic loss (5%+)
         if is_drawdown_breaker(conn):
-            log.info(f"SKIP {ticker} — circuit breaker active (drawdown)")
+            log.info(f"SKIP {ticker} — portfolio circuit breaker active (>5% drawdown)")
+            continue
+
+        # Sector circuit breaker — pause entries in sectors with 2+ stops this week
+        # Allows rotation to other sectors while protecting the troubled one
+        ticker_sector = rec.get("sector", "")
+        if ticker_sector and is_sector_breaker(ticker_sector, conn):
+            log.info(f"SKIP {ticker} — sector breaker active "
+                     f"({ticker_sector} has 2+ stop losses this week)")
             continue
 
         # Check max concurrent open positions
