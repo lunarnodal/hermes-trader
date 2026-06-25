@@ -600,11 +600,24 @@ async function loadData() {
   // Sector bars
   const sectors = data.top_sectors || [];
   const maxSector = Math.max(...sectors.map(s => s.count), 1);
+  const breakers = data.sector_breakers || {};
   document.getElementById('sectorBars').innerHTML = sectors.map(s => {
     const w = Math.round(s.count / maxSector * 100);
     const col = s.bias === 'bullish' ? '#3fb950' : s.bias === 'bearish' ? '#f85149' : '#8b949e';
+    const breaker = breakers[s.sector] || {};
+    const paused  = breaker.paused;
+    const stops   = breaker.stops || 0;
+    const statusDot = paused
+      ? `<span title="${stops} stop losses this week — entries paused"
+           style="display:inline-flex;align-items:center;gap:3px;
+                  background:#3a1a1a;color:#f85149;font-size:10px;
+                  padding:1px 5px;border-radius:3px;margin-left:4px;">
+           🔴 paused</span>`
+      : `<span title="${stops} stop losses this week — entries open"
+           style="display:inline-flex;align-items:center;gap:3px;
+                  color:#3fb950;font-size:10px;margin-left:4px;">●</span>`;
     return `<div class="sector-bar">
-      <span class="sector-name">${s.sector}</span>
+      <span class="sector-name" style="width:120px">${s.sector}${statusDot}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
       <span class="sector-count">${s.count}</span>
     </div>`;
@@ -1001,6 +1014,26 @@ def api_data():
         data['positions'] = []
         data['recommendations'] = []
         data['closed_positions'] = []
+
+    # Sector circuit breaker status
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from portfolio.manager import get_sector_stop_count, is_sector_breaker
+        from portfolio.db import init_db as _init_port
+        _pconn = _init_port()
+        _sectors = ['technology','healthcare','energy','defense',
+                    'financials','consumer','materials','industrials','macro']
+        data['sector_breakers'] = {
+            s: {
+                'stops':   get_sector_stop_count(_pconn, s, days=7),
+                'paused':  is_sector_breaker(s, _pconn),
+            }
+            for s in _sectors
+        }
+        _pconn.close()
+    except Exception as e:
+        data['sector_breakers'] = {}
 
     # Portfolio snapshots for P&L chart
     try:

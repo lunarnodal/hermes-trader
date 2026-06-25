@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tickers.taxonomy import sectors_for_query, normalize_sectors
 
 SPARK_LLAMA   = os.getenv("SPARK_LLAMA_HOST", "http://172.29.11.225:8080")
-OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
+OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")  # legacy
+LLAMA_EMBED_URL = os.getenv("LLAMA_EMBED_URL", "http://localhost:8081/v1/embeddings")
 QDRANT_HOST   = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT   = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION    = os.getenv("QDRANT_COLLECTION", "trading_signals")
@@ -130,12 +131,17 @@ CONSTRAINTS:
 def embed_query(query: str) -> list[float]:
     """Generate embedding for semantic search using airig's Ollama"""
     resp = requests.post(
-        f"{OLLAMA_HOST}/api/embed",
+        LLAMA_EMBED_URL,
         json={"model": EMBED_MODEL, "input": query},
         timeout=30
     )
     resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+    data = resp.json()
+    # llama.cpp returns {"data": [{"embedding": [...]}]}
+    if "data" in data:
+        return data["data"][0]["embedding"]
+    # fallback for older format
+    return data["embeddings"][0]
 
 
 def query_qdrant(query: str, limit: int = 15,
