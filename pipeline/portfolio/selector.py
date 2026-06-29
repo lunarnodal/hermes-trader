@@ -364,9 +364,19 @@ def generate_recommendations(predictions: list[dict],
         # Extract sector from query
         query_lower = query.lower()
         sector = "macro"
-        for s in ["energy", "technology", "ai", "semiconductors",
-                  "financials", "healthcare", "defense", "utilities"]:
-            if s in query_lower:
+        sector_keywords = {
+            "energy":      ["energy", "oil", "gas", "utilities", "renewables"],
+            "technology":  ["technology", "ai", "semiconductor", "data center"],
+            "financials":  ["financial", "bank", "rates", "real estate"],
+            "healthcare":  ["healthcare", "biotech", "pharma"],
+            "defense":     ["defense", "aerospace", "defense"],
+            "materials":   ["materials", "mining", "metals", "chemicals", "commodities"],
+            "industrials": ["industrials", "manufacturing", "infrastructure"],
+            "consumer":    ["consumer", "retail", "discretionary", "staples"],
+            "macro":       ["market outlook", "macro", "s&p 500"],
+        }
+        for s, keywords in sector_keywords.items():
+            if any(kw in query_lower for kw in keywords):
                 sector = s
                 break
 
