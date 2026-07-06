@@ -189,6 +189,14 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             import re as _re
             # Fix doubled sectors key: "sectors":"sectors": -> "sectors":
             raw = raw.replace('"sectors":"sectors":', '"sectors":')
+            # Fix double comma: ,, -> ,
+            raw = _re.sub(r',\s*,', ',', raw)
+            # Fix missing tickers entirely: "confidence":0.75,,"sectors" -> add tickers
+            raw = _re.sub(
+                r'("confidence"\s*:\s*[\d.]+)\s*,\s*("sectors")',
+                r',"tickers":[],',
+                raw
+            )
             # Fix missing tickers value: "tickers":, -> "tickers":[],
             raw = _re.sub(r'"tickers"\s*:\s*,', '"tickers":[],', raw)
             # Fix bare array after tickers: ["NI"],["energy"] -> ["NI"],"sectors":["energy"]
