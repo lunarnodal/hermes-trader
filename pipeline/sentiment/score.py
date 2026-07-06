@@ -194,7 +194,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             # Fix missing tickers entirely: "confidence":0.75,,"sectors" -> add tickers
             raw = _re.sub(
                 r'("confidence"\s*:\s*[\d.]+)\s*,\s*("sectors")',
-                r',"tickers":[],',
+                r'\1,"tickers":[],\2',
                 raw
             )
             # Fix missing tickers value: "tickers":, -> "tickers":[],
