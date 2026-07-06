@@ -185,6 +185,18 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
                     raw = raw[4:]
                 raw = raw.strip()
 
+            # Fix common qwen3 JSON malformations:
+            import re as _re
+            # Fix doubled sectors key: "sectors":"sectors": -> "sectors":
+            raw = raw.replace('"sectors":"sectors":', '"sectors":')
+            # Fix missing tickers value: "tickers":, -> "tickers":[],
+            raw = _re.sub(r'"tickers"\s*:\s*,', '"tickers":[],', raw)
+            # Fix bare array after tickers: ["NI"],["energy"] -> ["NI"],"sectors":["energy"]
+            raw = _re.sub(
+                r'("tickers"\s*:\s*\[[^\]]*\])\s*,\s*(\[)',
+                r',"sectors":',
+                raw
+            )
             scored = json.loads(raw)
 
             # Validate required fields
