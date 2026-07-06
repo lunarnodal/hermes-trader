@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-SPARK_OLLAMA_HOST = os.getenv("SPARK_OLLAMA_HOST", "http://172.29.11.225:11434")
-DISCOVERY_MODEL   = "deepseek-r1:70b"
+SPARK_LLAMA_HOST = os.getenv("SPARK_LLAMA_HOST", "http://172.29.11.225:8080")
+DISCOVERY_MODEL   = os.getenv("REASONING_MODEL", "deepseek-r1")
 SIGNALS_DIR       = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
 LOOKBACK_DAYS     = 7
 
@@ -95,12 +95,29 @@ def discover_rules_via_llm(signals: list[dict],
         resp = None
         for attempt in range(3):
             try:
+# BEFORE
+#
+#                resp = requests.post(
+#                    f"{SPARK_OLLAMA_HOST}/api/chat",
+#                    json={
+#                        "model": DISCOVERY_MODEL,
+#                        "stream": False,
+#                        "options": {"temperature": 0.1, "num_predict": 4096},
+#                        "messages": [
+#                            {"role": "system", "content": DISCOVERY_PROMPT},
+#                            {"role": "user",   "content": user_msg}
+#                        ]
+#                    },
+#                    timeout=600
+#                )
+# AFTER
                 resp = requests.post(
-                    f"{SPARK_OLLAMA_HOST}/api/chat",
+                    f"{SPARK_LLAMA_HOST}/v1/chat/completions",
                     json={
                         "model": DISCOVERY_MODEL,
                         "stream": False,
-                        "options": {"temperature": 0.1, "num_predict": 4096},
+                        "temperature": 0.1,
+                        "max_tokens": 4096,
                         "messages": [
                             {"role": "system", "content": DISCOVERY_PROMPT},
                             {"role": "user",   "content": user_msg}
@@ -116,9 +133,15 @@ def discover_rules_via_llm(signals: list[dict],
                     import time; time.sleep(30)
                 else:
                     raise
+# BEFORE
+#        raw     = resp.json()
+#        content = raw["message"]["content"].strip()
+#        thinking = raw["message"].get("thinking", "")
+# AFTER
         raw     = resp.json()
-        content = raw["message"]["content"].strip()
-        thinking = raw["message"].get("thinking", "")
+        msg     = raw["choices"][0]["message"]
+        content = (msg.get("content") or "").strip()
+        thinking = msg.get("reasoning_content", "")
 
         log.info(f"Response: {len(content)} content chars, {len(thinking)} thinking chars")
 
@@ -173,6 +196,37 @@ def run_discovery() -> None:
         if trigger and sectors and len(trigger) > 4:
             propose_rule(conn, trigger, sectors, evidence)
 
+    # Promote proposals seen 2+ times
+    PROMOTION_THRESHOLD = 2
+    try:
+        from datetime import datetime, timezone as _tz
+        _now = datetime.now(_tz.utc).isoformat()
+        to_promote = conn.execute("""
+            SELECT id, trigger, sectors FROM rule_proposals
+            WHERE status = 'pending' AND occurrence_count >= ?
+        """, (PROMOTION_THRESHOLD,)).fetchall()
+        newly_promoted = 0
+        for prop_id, trigger, sectors in to_promote:
+            exists = conn.execute(
+                "SELECT 1 FROM inference_rules WHERE trigger = ?", (trigger,)
+            ).fetchone()
+            if not exists:
+                conn.execute("""
+                    INSERT INTO inference_rules
+                    (trigger, sectors, confidence, source, created_at, updated_at)
+                    VALUES (?, ?, 0.70, 'discovered', ?, ?)
+                """, (trigger, sectors, _now, _now))
+                log.info(f"Promoted rule: '{trigger}'")
+                newly_promoted += 1
+            conn.execute(
+                "UPDATE rule_proposals SET status='approved', approved_at=? WHERE id=?",
+                (_now, prop_id)
+            )
+        conn.commit()
+    except Exception as _e:
+        log.warning(f"Promotion failed: {_e}")
+        newly_promoted = 0
+
     pending  = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'"
     ).fetchone()[0]
@@ -182,7 +236,7 @@ def run_discovery() -> None:
 
     log.info(f"─── Discovery complete ───")
     log.info(f"    Pending proposals : {pending}")
-    log.info(f"    Promoted to active: {promoted}")
+    log.info(f"    Promoted to active: {promoted} (+{newly_promoted} new)")
     conn.close()
 
 
