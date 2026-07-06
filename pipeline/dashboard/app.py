@@ -340,7 +340,7 @@ async function loadData() {
   const statusText = document.getElementById('statusText');
   const macroP = (data.predictions||[]).find(p =>
     p.query && (p.query.includes('market outlook') || p.query.includes('macro')));
-  const circuitBreaker = (data.portfolio?.return_pct || 0) < -2;
+  const circuitBreaker = (data.portfolio?.return_pct || 0) < -5;
   const nowDt = new Date();
   const day = nowDt.getDay();
   const hour = nowDt.getHours();
