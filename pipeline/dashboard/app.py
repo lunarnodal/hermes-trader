@@ -333,22 +333,14 @@ const SECTOR_COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0f
 async function loadData() {
   const data = await fetch('/api/data').then(r => r.json());
 
+  const breakers = data.sector_breakers || {};
+  const vix = data.vix || {};
   // Status badge
   const badge = document.getElementById('statusBadge');
   const statusText = document.getElementById('statusText');
   const macroP = (data.predictions||[]).find(p =>
     p.query && (p.query.includes('market outlook') || p.query.includes('macro')));
   const circuitBreaker = (data.portfolio?.return_pct || 0) < -2;
-  // VIX gate check
-  const vix = data.vix || {};
-  if (vix.action === 'pause') {
-    badge.className = 'status-badge status-breaker';
-    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — volatility halt`;
-  } else if (vix.action === 'reduce') {
-    badge.className = 'status-badge status-macro';
-    statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — reduced size`;
-  }
-
   const nowDt = new Date();
   const day = nowDt.getDay();
   const hour = nowDt.getHours();
@@ -639,7 +631,6 @@ async function loadData() {
   // Sector bars
   const sectors = data.top_sectors || [];
   const maxSector = Math.max(...sectors.map(s => s.count), 1);
-  const breakers = data.sector_breakers || {};
   document.getElementById('sectorBars').innerHTML = sectors.map(s => {
     const w = Math.round(s.count / maxSector * 100);
     const col = s.bias === 'bullish' ? '#3fb950' : s.bias === 'bearish' ? '#f85149' : '#8b949e';
