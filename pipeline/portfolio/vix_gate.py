@@ -49,7 +49,7 @@ def get_vix() -> float | None:
         resp.raise_for_status()
         data   = resp.json()
         result = data["chart"]["result"][0]
-        closes = result["indicators"]["quote"][0]["close"]
+        closes = result["indicators"]["quote"][0].get("close") or []
 
         # Get most recent non-null value
         vix = next((v for v in reversed(closes) if v is not None), None)

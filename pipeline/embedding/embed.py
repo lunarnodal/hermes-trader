@@ -25,8 +25,8 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 QDRANT_HOST   = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT   = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION    = os.getenv("QDRANT_COLLECTION", "trading_signals")
-OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
-EMBED_MODEL   = "bge-m3"
+LLAMA_EMBED_URL = os.getenv("LLAMA_EMBED_URL", "http://localhost:8081/v1/embeddings")
+EMBED_MODEL     = os.getenv("LLAMA_EMBED_MODEL", "bge-m3")
 VECTOR_SIZE   = 1024  # BGE-M3 output dimension
 TIMESERIES_DIR = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
 
@@ -72,15 +72,15 @@ def embed_text(text: str) -> list[float] | None:
     """Generate BGE-M3 embedding via Ollama"""
     try:
         resp = requests.post(
-            f"{OLLAMA_HOST}/api/embed",
+            LLAMA_EMBED_URL,
             json={"model": EMBED_MODEL, "input": text},
             timeout=30
         )
         resp.raise_for_status()
         data = resp.json()
-        embeddings = data.get("embeddings", [])
-        if embeddings:
-            return embeddings[0]
+        items = data.get("data", [])
+        if items and "embedding" in items[0]:
+            return items[0]["embedding"]
         return None
     except Exception as e:
         log.error(f"Embedding failed: {e}")
