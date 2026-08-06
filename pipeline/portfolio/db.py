@@ -35,7 +35,7 @@ CONFIG = {
     },
     "min_hold_before_stop_days": 1,  # Don't stop out same day as entry
     "min_hold_days":        3,         # minimum 3 trading days
-    "max_hold_days":        10,        # re-evaluate after 10 trading days
+    "max_hold_days":        15,        # extended from 10 — give positions more time to developding days
     "max_new_positions_week": 5,       # max 5 new positions per week — quality over quantity
     "max_open_positions":   12,        # max 12 simultaneous open positions
     "drawdown_circuit_breaker_pct": 0.05,   # portfolio freeze only on catastrophic loss (5%+)
@@ -85,7 +85,7 @@ CONFIG = {
     # Each tier: (gain_pct, sell_fraction, move_stop_to)
     # move_stop_to: 'breakeven' | 'previous_tier' | float (pct gain)
     "profit_tiers": [
-        (0.05, 0.33, "breakeven"),      # +5%:  sell 33%, stop → breakeven
+        (0.04, 0.33, "breakeven"),   # +4%: sell 33%, stop → breakeven (was 5%)
         (0.08, 0.33, "previous_tier"),  # +8%:  sell 33%, stop → +5%
         (0.12, 1.00, "previous_tier"),  # +12%: sell remaining, stop → +8%
     ],
