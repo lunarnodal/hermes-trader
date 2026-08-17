@@ -101,8 +101,9 @@ def record_prediction(conn: sqlite3.Connection,
     cursor = conn.execute("""
         INSERT INTO predictions
         (created_at, query, timeframe, direction, probability, confidence,
-         model_used, signals_used, key_risk, reasoning_summary, prediction_file)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         model_used, signals_used, key_risk, reasoning_summary, prediction_file,
+         full_reasoning, critic_verdict, critic_reasoning, critic_confidence)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         now,
         prediction.get("query", ""),
@@ -114,7 +115,11 @@ def record_prediction(conn: sqlite3.Connection,
         prediction.get("signals_used", 0),
         p.get("key_risk", ""),
         p.get("reasoning_summary", ""),
-        prediction_file or ""
+        prediction_file or "",
+        prediction.get("reasoning", ""),
+        p.get("critic_verdict", ""),
+        p.get("critic_reasoning", ""),
+        p.get("critic_confidence", None),
     ))
     conn.commit()
     pred_id = cursor.lastrowid

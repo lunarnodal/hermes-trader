@@ -369,6 +369,39 @@ Based on these signals, provide your reasoning and prediction."""
             prediction["calibration_applied"]   = cal_explanation
             log.info(f"Calibrated: {cal_explanation}")
 
+    # Apply critic review — challenge or reject weak predictions
+    critic_verdict   = None
+    critic_reasoning = ""
+    critic_confidence = None
+    if prediction:
+        try:
+            from reasoning.critic import critique_prediction
+            critic_result = critique_prediction(
+                query,
+                prediction.get("direction", "neutral"),
+                prediction.get("confidence", 0.65),
+                reasoning=thinking,
+            )
+            critic_verdict    = critic_result["verdict"]
+            critic_reasoning  = critic_result["reasoning"]
+            critic_confidence = critic_result["adjusted_confidence"]
+
+            if critic_result["verdict"] == "reject":
+                log.warning(f"Critic REJECTED: {critic_result['reasoning'][:100]}")
+            elif critic_result["verdict"] == "challenge":
+                log.info(f"Critic challenged: {critic_result['reasoning'][:80]}")
+                if critic_confidence < prediction.get("confidence", 0.65):
+                    prediction["confidence"] = critic_confidence
+                    prediction["probability"] = critic_confidence
+            else:
+                log.info("Critic approved prediction")
+
+            prediction["critic_verdict"]    = critic_verdict
+            prediction["critic_reasoning"]  = critic_reasoning
+            prediction["critic_confidence"] = critic_confidence
+        except Exception as _ce:
+            log.warning(f"Critic failed (non-fatal): {_ce}")
+
     return {
         "query":      query,
         "timeframe":  timeframe,
