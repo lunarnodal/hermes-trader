@@ -285,9 +285,49 @@ def run_prediction(query: str, timeframe: str = "24h",
 
     # Format context
     signal_context = format_signals_for_reasoning(signals)
+    # Build track record context for this sector
+    track_record_context = ""
+    try:
+        import sqlite3 as _sql
+        _db = Path(__file__).parent.parent / "data" / "paper_trading.db"
+        _conn = _sql.connect(_db)
+        _sector_hint = query.split("—")[0].strip()[:25]
+        _rows = _conn.execute("""
+            SELECT direction, actual_direction, was_correct
+            FROM predictions
+            WHERE query LIKE ? AND was_correct IS NOT NULL
+            ORDER BY created_at DESC LIMIT 20
+        """, (f"%{_sector_hint}%",)).fetchall()
+        _conn.close()
+        if len(_rows) >= 5:
+            _total   = len(_rows)
+            _correct = sum(1 for r in _rows if r[2] == 1)
+            _wr      = _correct / _total * 100
+            _dirs = {}
+            for r in _rows:
+                key = f"{r[0]}→{r[1]}"
+                _dirs[key] = _dirs.get(key, 0) + 1
+            _dir_str = ", ".join(
+                f"{k}:{v}" for k, v in
+                sorted(_dirs.items(), key=lambda x: -x[1])[:4]
+            )
+            track_record_context = f"""
+PREDICTION TRACK RECORD (last {_total} verified predictions for this sector):
+  Win rate: {_wr:.0f}% ({_correct}/{_total} correct)
+  Direction outcomes: {_dir_str}
+
+  IMPORTANT: If win rate is below 40%, you have been systematically wrong.
+  If you have been predicting bullish when actual was often bearish or neutral,
+  you MUST actively consider the bearish and neutral cases even when signals
+  appear bullish. Financial news skews positive — do not let that bias you.
+"""
+    except Exception as _e:
+        log.debug(f"Could not load track record: {_e}")
+
     user_prompt = f"""Query: {query}
 Timeframe: {timeframe}
 
+{track_record_context}
 {signal_context}
 
 Based on these signals, provide your reasoning and prediction."""
