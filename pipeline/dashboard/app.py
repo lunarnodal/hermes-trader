@@ -1060,7 +1060,7 @@ def api_data():
     try:
         import sys as _sys
         _sys.path.insert(0, str(Path(__file__).parent.parent))
-        from alpaca.data import get_live_prices
+        from alpaca_feed.data import get_live_prices
         _symbols = [p['ticker'] for p in data.get('positions', [])
                     if p.get('ticker')]
         if _symbols:
