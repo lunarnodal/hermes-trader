@@ -118,6 +118,18 @@ def is_sector_breaker(sector: str, conn) -> bool:
     return False
 
 
+def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") -> None:
+    """Mirror trade to Alpaca paper account — non-fatal if it fails"""
+    try:
+        from alpaca_feed.trading import place_market_order
+        if action == "BUY":
+            place_market_order(ticker, shares, "buy", reason)
+        elif action in ("SELL", "PARTIAL_SELL"):
+            place_market_order(ticker, shares, "sell", reason)
+    except Exception as _e:
+        log.warning(f"Alpaca mirror failed (non-fatal): {_e}")
+
+
 def is_macro_bearish() -> bool:
     """Return True if most recent market_overview prediction is bearish"""
     if not CONFIG.get("macro_gate_enabled"):
@@ -227,6 +239,8 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
                         "UPDATE positions SET tiers_triggered = ? WHERE id = ?",
                         (tier_idx + 1, pos["id"])
                     )
+                    _alpaca_mirror("PARTIAL_SELL", ticker,
+                                   round(pos["shares"] * fraction, 0), reason)
                     actions.append({
                         "action": "PARTIAL_SELL",
                         "reason": reason,
@@ -241,6 +255,7 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
                      f"(entry=${pos['entry_price']:.2f}, {pnl_pct:.1f}%)")
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
+                _alpaca_mirror("SELL", ticker, pos["shares"], reason)
                 actions.append({"action": "SELL", "reason": "stop_loss", **result})
 
     conn.commit()
@@ -274,6 +289,7 @@ def check_time_exits(conn, dry_run: bool = False) -> list[dict]:
                      f"P&L={pnl_pct:+.1f}%")
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
+                _alpaca_mirror("SELL", ticker, pos["shares"], reason)
                 actions.append({"action": "SELL", "reason": "time_exit", **result})
 
     conn.commit()
@@ -393,6 +409,8 @@ def execute_recommendations(conn, recommendations: list[dict],
                 notes=rec.get("rationale", "")
             )
             if pos_id > 0:
+                _alpaca_mirror("BUY", ticker, shares,
+                               f"sector={sector} conf={rec.get('avg_confidence',0):.0%}")
                 executed.append({
                     "action":  "BUY",
                     "ticker":  ticker,
