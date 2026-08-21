@@ -1052,6 +1052,35 @@ def api_data():
         data['recommendations'] = []
         data['closed_positions'] = []
 
+    # Enrich open positions with live Alpaca prices
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from alpaca.data import get_live_prices
+        _symbols = [p['ticker'] for p in data.get('positions', [])
+                    if p.get('ticker')]
+        if _symbols:
+            _live = get_live_prices(_symbols)
+            for pos in data.get('positions', []):
+                sym = pos.get('ticker')
+                if sym and sym in _live:
+                    live_price = _live[sym]
+                    pos['live_price']    = live_price
+                    pos['live_pnl_pct']  = round(
+                        (live_price - pos['entry_price']) / pos['entry_price'] * 100, 2
+                    ) if pos.get('entry_price') else None
+                    pos['live_value']    = round(
+                        live_price * pos.get('shares', 0), 2
+                    )
+                    pos['live_pnl']      = round(
+                        pos['live_value'] - pos.get('cost_basis', 0), 2
+                    )
+                    pos['price_source']  = 'live'
+                else:
+                    pos['price_source']  = 'snapshot'
+    except Exception as e:
+        log.warning(f"Live price enrichment failed: {e}")
+
     # Sector circuit breaker status
     try:
         import sys as _sys
