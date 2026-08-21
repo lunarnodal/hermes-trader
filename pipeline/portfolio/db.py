@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 CONFIG = {
-    "starting_capital":     50_000.00,
+    "starting_capital":     100_000.00,
     "max_position_pct":     0.10,      # 10% max per position
     "min_cash_reserve_pct": 0.10,      # 10% minimum cash
     "max_sector_pct":       0.25,      # 25% max per sector
