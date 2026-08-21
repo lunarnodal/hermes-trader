@@ -514,14 +514,18 @@ async function loadData() {
     posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
   } else {
     posBody.innerHTML = positions.map(p => {
-      const pnl = p.unrealized_pct || 0;
+      const useLive  = p.live_price != null;
+      const pnl      = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
+      const liveTag  = useLive
+        ? '<span style="font-size:9px;color:#3fb950;margin-left:3px">●</span>'
+        : '';
       const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
       const tiers = p.tiers_triggered || 0;
       const tierBadge = tiers > 0
         ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
         : '—';
       return `<tr>
-        <td style="font-weight:600">${p.ticker}</td>
+        <td style="font-weight:600">${p.ticker}${liveTag}</td>
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
