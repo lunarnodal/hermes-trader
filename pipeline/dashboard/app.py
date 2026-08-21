@@ -199,6 +199,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           <tr>
             <th>Ticker</th><th>Sector</th><th>Shares</th>
             <th style="text-align:right">Entry</th>
+            <th style="text-align:right">Price</th>
             <th style="text-align:right">P&L</th>
             <th style="text-align:right">Stop</th>
             <th style="text-align:center">Tier</th>
@@ -529,6 +530,7 @@ async function loadData() {
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
+        <td style="text-align:right" class="${pnlCls}">${useLive ? fmt$(p.live_price) : fmt$(p.current_price||0)}</td>
         <td style="text-align:right" class="${pnlCls}">${fmtPct(pnl)}</td>
         <td style="text-align:right" class="gray">${fmt$(p.stop_loss)}</td>
         <td style="text-align:center">${tierBadge}</td>
