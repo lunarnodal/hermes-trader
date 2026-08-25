@@ -357,5 +357,5 @@ if __name__ == "__main__":
     os.environ.setdefault("HOST", "0.0.0.0")
     os.environ.setdefault("PORT", "8101")
     log.info(f"Starting Trading Pipeline MCP on {os.environ['HOST']}:{os.environ['PORT']}")
-    mcp.run(transport="sse")
+    mcp.run(transport="streamable-http")
 
