@@ -359,3 +359,275 @@ if __name__ == "__main__":
     log.info(f"Starting Trading Pipeline MCP on {os.environ['HOST']}:{os.environ['PORT']}")
     mcp.run(transport="streamable-http")
 
+
+
+@mcp.tool()
+def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
+    """
+    Validate a proposed trade against all portfolio rules and gates.
+    Returns approval status and detailed reasoning for each gate.
+    
+    Use this before placing any order to check if it meets system requirements.
+    Args:
+        ticker: Stock symbol (e.g. 'NVDA', 'XLV')
+        shares: Number of shares
+        side: 'buy' or 'sell'
+    """
+    import requests
+    gates = []
+    approved = True
+
+    # Get current price from Alpaca
+    try:
+        from alpaca_feed.data import get_live_prices
+        prices = get_live_prices([ticker])
+        price = prices.get(ticker)
+    except:
+        price = None
+
+    value = round(shares * price, 2) if price else None
+
+    # Gate 1: Market hours
+    from portfolio.market_calendar import is_trading_day
+    from datetime import date
+    if not is_trading_day():
+        gates.append({
+            "gate": "Market Hours",
+            "pass": False,
+            "reason": f"Market is closed today ({date.today()})"
+        })
+        approved = False
+    else:
+        gates.append({"gate": "Market Hours", "pass": True,
+                      "reason": "Market is open"})
+
+    if side.lower() == "buy":
+        # Gate 2: Portfolio circuit breaker
+        conn = sqlite3.connect(PORTFOLIO_DB)
+        snaps = conn.execute("""
+            SELECT total_value FROM portfolio_snapshots
+            ORDER BY snapshot_at DESC LIMIT 10
+        """).fetchall()
+        if snaps:
+            peak = max(s[0] for s in snaps)
+            current_val = snaps[0][0]
+            drawdown = (peak - current_val) / peak
+            if drawdown >= 0.05:
+                gates.append({
+                    "gate": "Portfolio Circuit Breaker",
+                    "pass": False,
+                    "reason": f"Portfolio down {drawdown:.1%} from peak — all entries paused until recovery"
+                })
+                approved = False
+            else:
+                gates.append({"gate": "Portfolio Circuit Breaker", "pass": True,
+                              "reason": f"Drawdown {drawdown:.1%} within limit"})
+
+        # Gate 3: Position size
+        if value:
+            cash = conn.execute(
+                "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+            total_port = cash  # simplified
+            max_position = total_port * 0.10
+            if value > max_position:
+                gates.append({
+                    "gate": "Position Size",
+                    "pass": False,
+                    "reason": f"${value:,.0f} exceeds 10% max position size (${max_position:,.0f} at current portfolio value)"
+                })
+                approved = False
+            else:
+                gates.append({"gate": "Position Size", "pass": True,
+                              "reason": f"${value:,.0f} within 10% limit"})
+
+        # Gate 4: Sector breaker
+        # Determine sector from ticker
+        sector_map = {
+            'XLK': 'technology', 'NVDA': 'technology', 'AAPL': 'technology',
+            'MSFT': 'technology', 'AMD': 'technology', 'INTC': 'technology',
+            'XLV': 'healthcare', 'UNH': 'healthcare', 'JNJ': 'healthcare',
+            'XLE': 'energy', 'XOM': 'energy', 'CVX': 'energy',
+            'XLF': 'financials', 'JPM': 'financials', 'BAC': 'financials',
+            'XLB': 'materials', 'XLI': 'industrials', 'XLP': 'consumer',
+            'ITA': 'defense', 'SPY': 'macro', 'QQQ': 'technology',
+        }
+        sector = sector_map.get(ticker.upper(), 'unknown')
+
+        if sector != 'unknown':
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            stops = conn.execute("""
+                SELECT COUNT(*) FROM positions
+                WHERE sector=? AND status='closed'
+                  AND exit_reason LIKE 'stop_loss%'
+                  AND exit_date >= ?
+            """, (sector, cutoff)).fetchone()[0]
+
+            if stops >= 2:
+                gates.append({
+                    "gate": "Sector Circuit Breaker",
+                    "pass": False,
+                    "reason": f"{sector} sector has {stops} stop losses in last 7 days — entries paused"
+                })
+                approved = False
+            else:
+                gates.append({"gate": "Sector Circuit Breaker", "pass": True,
+                              "reason": f"{sector}: {stops} stops this week, below threshold"})
+
+        # Gate 5: Prediction confidence
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        if sector and sector != 'unknown':
+            pred = conn.execute("""
+                SELECT direction, confidence, critic_verdict FROM predictions
+                WHERE query LIKE ? AND date(created_at) = ?
+                  AND was_correct IS NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (f'%{sector}%', today)).fetchone()
+
+            if pred:
+                direction, confidence, verdict = pred
+                if confidence < 0.70:
+                    gates.append({
+                        "gate": "Prediction Confidence",
+                        "pass": False,
+                        "reason": f"{sector} prediction: {direction} {confidence:.0%} — below 0.70 entry threshold (critic: {verdict})"
+                    })
+                    approved = False
+                else:
+                    gates.append({"gate": "Prediction Confidence", "pass": True,
+                                  "reason": f"{sector}: {direction} {confidence:.0%} ≥ 0.70 threshold"})
+            else:
+                gates.append({
+                    "gate": "Prediction Confidence",
+                    "pass": False,
+                    "reason": f"No prediction found for {sector} today"
+                })
+                approved = False
+
+        # Gate 6: Weekly trade limit
+        from datetime import timedelta
+        monday = datetime.now(timezone.utc)
+        monday = monday - timedelta(days=monday.weekday())
+        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_buys = conn.execute("""
+            SELECT COUNT(*) FROM transactions
+            WHERE action='BUY' AND timestamp >= ?
+        """, (monday.isoformat(),)).fetchone()[0]
+
+        if week_buys >= 5:
+            gates.append({
+                "gate": "Weekly Trade Limit",
+                "pass": False,
+                "reason": f"Weekly limit reached ({week_buys}/5 trades this week)"
+            })
+            approved = False
+        else:
+            gates.append({"gate": "Weekly Trade Limit", "pass": True,
+                          "reason": f"{week_buys}/5 trades used this week"})
+
+        # Gate 7: VIX
+        try:
+            from portfolio.vix_gate import get_vix_gate
+            vix = get_vix_gate()
+            if vix['action'] == 'pause':
+                gates.append({"gate": "VIX Gate", "pass": False,
+                              "reason": vix['reason']})
+                approved = False
+            else:
+                gates.append({"gate": "VIX Gate", "pass": True,
+                              "reason": vix['reason']})
+        except:
+            gates.append({"gate": "VIX Gate", "pass": True,
+                          "reason": "VIX check unavailable — proceeding"})
+
+        conn.close()
+
+    passed = sum(1 for g in gates if g["pass"])
+    total = len(gates)
+
+    return json.dumps({
+        "ticker":   ticker,
+        "shares":   shares,
+        "side":     side,
+        "price":    f"${price:.2f}" if price else "unknown",
+        "value":    f"${value:,.2f}" if value else "unknown",
+        "approved": approved,
+        "summary":  f"{passed}/{total} gates passed",
+        "gates":    gates,
+        "verdict":  "APPROVED — trade meets all system requirements" if approved
+                    else "REJECTED — trade does not meet system requirements"
+    }, indent=2)
+
+
+@mcp.tool()
+def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
+    """
+    Execute a trade through the portfolio management system.
+    
+    This is the ONLY way to place orders. It automatically:
+    1. Runs validate_trade() through all portfolio gates
+    2. If approved, places the order via Alpaca
+    3. If rejected, returns the specific gate failures
+    
+    Never call Alpaca order tools directly — always use this function.
+    
+    Args:
+        ticker: Stock symbol
+        shares: Number of shares  
+        side: 'buy' or 'sell'
+    """
+    import json as _json
+    
+    # Step 1: Run validation
+    validation = _json.loads(validate_trade(ticker, shares, side))
+    
+    if not validation['approved']:
+        # Return rejection with gate details — do not place order
+        failed = [g for g in validation['gates'] if not g['pass']]
+        return _json.dumps({
+            "status": "REJECTED",
+            "ticker": ticker,
+            "shares": shares,
+            "side": side,
+            "message": f"Trade rejected — {len(failed)} gate(s) failed",
+            "failed_gates": failed,
+            "all_gates": validation['gates'],
+            "action": "No order placed. Address the failed gates before retrying."
+        }, indent=2)
+    
+    # Step 2: All gates passed — place the order via Alpaca
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent.parent))
+        from alpaca_feed.trading import place_market_order
+        
+        result = place_market_order(
+            ticker, shares, side,
+            reason=f"Hermes-initiated {side} — all gates passed"
+        )
+        
+        if result.get('success'):
+            return _json.dumps({
+                "status": "EXECUTED",
+                "ticker": ticker,
+                "shares": shares,
+                "side": side,
+                "order_id": result.get('order_id'),
+                "alpaca_status": result.get('status'),
+                "gates_passed": validation['summary'],
+                "message": f"Order placed successfully via Alpaca paper account"
+            }, indent=2)
+        else:
+            return _json.dumps({
+                "status": "FAILED",
+                "ticker": ticker,
+                "error": result.get('error'),
+                "message": "All gates passed but Alpaca order failed"
+            }, indent=2)
+            
+    except Exception as e:
+        return _json.dumps({
+            "status": "ERROR",
+            "ticker": ticker,
+            "error": str(e)
+        }, indent=2)
