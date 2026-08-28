@@ -21,6 +21,13 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import sys as _sys
+from pathlib import Path as _Path
+# Ensure pipeline directory is in path for imports
+_pipeline_dir = str(_Path(__file__).parent.parent)
+if _pipeline_dir not in _sys.path:
+    _sys.path.insert(0, _pipeline_dir)
+
 from mcp.server.fastmcp import FastMCP
 
 log = logging.getLogger(__name__)
@@ -348,31 +355,11 @@ def get_critic_verdicts(days: int = 3) -> str:
     }, indent=2)
 
 
-if __name__ == "__main__":
-    import os
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(message)s")
-
-    # FastMCP uses HOST and PORT env vars for SSE transport
-    os.environ.setdefault("HOST", "0.0.0.0")
-    os.environ.setdefault("PORT", "8101")
-    log.info(f"Starting Trading Pipeline MCP on {os.environ['HOST']}:{os.environ['PORT']}")
-    mcp.run(transport="streamable-http")
-
 
 
 @mcp.tool()
 def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
-    """
-    Validate a proposed trade against all portfolio rules and gates.
-    Returns approval status and detailed reasoning for each gate.
-    
-    Use this before placing any order to check if it meets system requirements.
-    Args:
-        ticker: Stock symbol (e.g. 'NVDA', 'XLV')
-        shares: Number of shares
-        side: 'buy' or 'sell'
-    """
+    """Validate a trade against portfolio gates. Returns gate-by-gate results."""
     import requests
     gates = []
     approved = True
@@ -561,21 +548,7 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
 @mcp.tool()
 def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
-    """
-    Execute a trade through the portfolio management system.
-    
-    This is the ONLY way to place orders. It automatically:
-    1. Runs validate_trade() through all portfolio gates
-    2. If approved, places the order via Alpaca
-    3. If rejected, returns the specific gate failures
-    
-    Never call Alpaca order tools directly — always use this function.
-    
-    Args:
-        ticker: Stock symbol
-        shares: Number of shares  
-        side: 'buy' or 'sell'
-    """
+    """Execute a trade via portfolio gates. Validates first, places order if approved."""
     import json as _json
     
     # Step 1: Run validation
@@ -631,3 +604,11 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
             "ticker": ticker,
             "error": str(e)
         }, indent=2)
+
+if __name__ == "__main__":
+    import os
+    import logging
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s")
+    log.info(f"Starting Trading Pipeline MCP on 0.0.0.0:8101")
+    mcp.run(transport="streamable-http")
