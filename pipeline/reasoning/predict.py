@@ -20,7 +20,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from tickers.taxonomy import sectors_for_query, normalize_sectors
 
-SPARK_LLAMA   = os.getenv("SPARK_LLAMA_HOST", "http://172.29.11.225:8080")
+SPARK_LLAMA   = os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083")
 OLLAMA_HOST   = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")  # legacy
 LLAMA_EMBED_URL = os.getenv("LLAMA_EMBED_URL", "http://localhost:8081/v1/embeddings")
 QDRANT_HOST   = os.getenv("QDRANT_HOST", "localhost")
