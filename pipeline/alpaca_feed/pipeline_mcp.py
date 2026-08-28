@@ -571,7 +571,7 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
     # Step 2: All gates passed — place the order
     try:
-        from alpaca_feed.trading import place_market_order
+        from alpaca_feed.trading_hackathon import place_market_order
         result = place_market_order(
             ticker, shares, side,
             reason=f"Hermes-initiated {side} — all gates passed"

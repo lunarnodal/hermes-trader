@@ -128,6 +128,29 @@ def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") ->
             place_market_order(ticker, shares, "sell", reason)
     except Exception as _e:
         log.warning(f"Alpaca mirror failed (non-fatal): {_e}")
+    # Also mirror to hackathon account
+    _alpaca_mirror_hackathon(action, ticker, shares, reason)
+
+
+def _alpaca_mirror_hackathon(action: str, ticker: str, shares: float, reason: str = "") -> None:
+    """Mirror trade to hackathon Alpaca account — validates position before selling"""
+    try:
+        from alpaca_feed.trading_hackathon import place_market_order, get_position
+        if action == "BUY":
+            place_market_order(ticker, shares, "buy", reason)
+        elif action in ("SELL", "PARTIAL_SELL"):
+            # Only sell if position exists in hackathon account
+            pos = get_position(ticker)
+            if not pos:
+                log.info(f"Hackathon mirror: skipping {action} {ticker} — no position in hackathon account")
+                return
+            available = pos.get('qty', 0)
+            sell_shares = min(shares, available)
+            if sell_shares <= 0:
+                return
+            place_market_order(ticker, sell_shares, "sell", reason)
+    except Exception as _e:
+        log.warning(f"Hackathon mirror failed (non-fatal): {_e}")
 
 
 def is_macro_bearish() -> bool:
