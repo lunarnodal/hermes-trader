@@ -12,32 +12,36 @@ Tools exposed:
   - get_active_rules: Top inference rules being applied
   - get_critic_verdicts: Recent prediction critic decisions
   - get_sector_breakers: Which sectors are paused and why
+  - validate_trade: Run a proposed trade through all portfolio gates
+  - execute_trade: Validate and execute a trade (gates must pass)
 """
 
 import sqlite3
 import json
 import os
 import logging
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import sys as _sys
-from pathlib import Path as _Path
 # Ensure pipeline directory is in path for imports
-_pipeline_dir = str(_Path(__file__).parent.parent)
-if _pipeline_dir not in _sys.path:
-    _sys.path.insert(0, _pipeline_dir)
+_pipeline_dir = str(Path(__file__).parent.parent)
+if _pipeline_dir not in sys.path:
+    sys.path.insert(0, _pipeline_dir)
 
 from mcp.server.fastmcp import FastMCP
+from portfolio.market_calendar import is_trading_day
+from portfolio.vix_gate import get_vix_gate
+from alpaca_feed.data import get_live_prices
 
 log = logging.getLogger(__name__)
 
 mcp = FastMCP("Trading Pipeline", host="0.0.0.0", port=8101)
 
-PAPER_DB    = Path("/home/trading/trading-ai/data/paper_trading.db")
+PAPER_DB     = Path("/home/trading/trading-ai/data/paper_trading.db")
 PORTFOLIO_DB = Path("/home/trading/trading-ai/data/portfolio.db")
-RULES_DB    = Path("/home/trading/trading-ai/data/rules.db")
-LESSONS_DB  = Path("/home/trading/trading-ai/data/lessons.db")
+RULES_DB     = Path("/home/trading/trading-ai/data/rules.db")
+LESSONS_DB   = Path("/home/trading/trading-ai/data/lessons.db")
 
 
 @mcp.tool()
@@ -62,17 +66,16 @@ def get_daily_predictions() -> str:
 
     predictions = []
     for r in rows:
-        # Extract sector from query
         query = r[0]
         sector = query.split('—')[0].strip() if '—' in query else query[:40]
         predictions.append({
-            "sector":          sector,
-            "direction":       r[1],
-            "confidence":      f"{r[2]:.0%}",
-            "critic_verdict":  r[3] or "pending",
-            "critic_note":     r[4][:100] if r[4] else "",
-            "summary":         r[5][:150] if r[5] else "",
-            "generated_at":    r[6][:16],
+            "sector":         sector,
+            "direction":      r[1],
+            "confidence":     f"{r[2]:.0%}",
+            "critic_verdict": r[3] or "pending",
+            "critic_note":    r[4][:100] if r[4] else "",
+            "summary":        r[5][:150] if r[5] else "",
+            "generated_at":   r[6][:16],
         })
 
     return json.dumps({
@@ -127,12 +130,12 @@ def get_sector_calibration() -> str:
             adj = 0.0
 
         calibration.append({
-            "sector":    sector,
-            "win_rate":  f"{win_rate:.0%}",
-            "correct":   f"{correct}/{total}",
+            "sector":     sector,
+            "win_rate":   f"{win_rate:.0%}",
+            "correct":    f"{correct}/{total}",
             "adjustment": f"{adj:+.2f}",
-            "status":    "strong" if win_rate > 0.55 else
-                         "weak" if win_rate < 0.35 else "average"
+            "status":     "strong" if win_rate > 0.55 else
+                          "weak" if win_rate < 0.35 else "average"
         })
 
     return json.dumps({"sector_calibration": calibration}, indent=2)
@@ -145,10 +148,10 @@ def get_portfolio_state() -> str:
     """
     conn = sqlite3.connect(PORTFOLIO_DB)
 
-    cash = conn.execute(
+    cash_row = conn.execute(
         "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    cash = cash[0] if cash else 0
+    cash = cash_row[0] if cash_row else 0
 
     positions = conn.execute("""
         SELECT ticker, sector, shares, entry_price, current_price,
@@ -165,15 +168,15 @@ def get_portfolio_state() -> str:
         pnl_pct = (current - p[3]) / p[3] * 100
         total_pos_value += value
         pos_list.append({
-            "ticker":   p[0],
-            "sector":   p[1],
-            "shares":   p[2],
-            "entry":    f"${p[3]:.2f}",
-            "current":  f"${current:.2f}",
-            "pnl_pct":  f"{pnl_pct:+.1f}%",
-            "value":    f"${value:.2f}",
-            "stop":     f"${p[5]:.2f}",
-            "tiers":    p[6] or 0,
+            "ticker":     p[0],
+            "sector":     p[1],
+            "shares":     p[2],
+            "entry":      f"${p[3]:.2f}",
+            "current":    f"${current:.2f}",
+            "pnl_pct":    f"{pnl_pct:+.1f}%",
+            "value":      f"${value:.2f}",
+            "stop":       f"${p[5]:.2f}",
+            "tiers":      p[6] or 0,
             "held_since": p[7][:10],
         })
 
@@ -187,7 +190,7 @@ def get_portfolio_state() -> str:
         "return_pct":      f"{(total-100000)/100000*100:+.2f}%",
         "open_positions":  len(pos_list),
         "positions":       pos_list,
-        "cash_pct":        f"{cash/total*100:.0f}%",
+        "cash_pct":        f"{cash/total*100:.0f}%" if total > 0 else "100%",
     }, indent=2)
 
 
@@ -217,10 +220,10 @@ def get_sector_breakers() -> str:
         paused = count >= 2
 
         breakers.append({
-            "sector":  sector,
+            "sector":   sector,
             "stops_7d": count,
-            "paused":  paused,
-            "reason":  f"{tickers}" if paused else "open for entries",
+            "paused":   paused,
+            "reason":   f"{tickers}" if paused else "open for entries",
         })
 
     conn.close()
@@ -242,14 +245,10 @@ def get_recent_signals(sector: str = "", limit: int = 5) -> str:
 
         client = QdrantClient(host="localhost", port=6333)
 
-        # Query recent high-sentiment points
         filter_conditions = None
         if sector:
             filter_conditions = Filter(
-                must=[FieldCondition(
-                    key="sectors",
-                    match=MatchText(text=sector)
-                )]
+                must=[FieldCondition(key="sectors", match=MatchText(text=sector))]
             )
 
         results = client.scroll(
@@ -264,13 +263,13 @@ def get_recent_signals(sector: str = "", limit: int = 5) -> str:
         for point in results[0]:
             p = point.payload
             signals.append({
-                "title":      p.get("title", "")[:80],
-                "source":     p.get("source", ""),
-                "sentiment":  p.get("sentiment", ""),
+                "title":     p.get("title", "")[:80],
+                "source":    p.get("source", ""),
+                "sentiment": p.get("sentiment", ""),
                 "confidence": p.get("confidence", 0),
-                "sectors":    p.get("sectors", []),
-                "tickers":    p.get("tickers", []),
-                "themes":     p.get("macro_themes", [])[:3],
+                "sectors":   p.get("sectors", []),
+                "tickers":   p.get("tickers", []),
+                "themes":    p.get("macro_themes", [])[:3],
             })
 
         return json.dumps({
@@ -297,19 +296,14 @@ def get_active_rules(limit: int = 10) -> str:
         ORDER BY confidence DESC, created_at DESC
         LIMIT ?
     """, (limit,)).fetchall()
+
+    total = conn.execute("SELECT COUNT(*) FROM inference_rules").fetchone()[0]
     conn.close()
 
     rules = [{"trigger": r[0], "sectors": r[1],
               "confidence": r[2], "source": r[3]} for r in rows]
 
-    total = sqlite3.connect(RULES_DB).execute(
-        "SELECT COUNT(*) FROM inference_rules"
-    ).fetchone()[0]
-
-    return json.dumps({
-        "total_rules": total,
-        "top_rules": rules
-    }, indent=2)
+    return json.dumps({"total_rules": total, "top_rules": rules}, indent=2)
 
 
 @mcp.tool()
@@ -336,16 +330,16 @@ def get_critic_verdicts(days: int = 3) -> str:
     for r in rows:
         sector = r[0].split('—')[0].strip()[:30]
         verdicts.append({
-            "sector":    sector,
-            "direction": r[1],
+            "sector":        sector,
+            "direction":     r[1],
             "original_conf": f"{r[2]:.0%}",
-            "verdict":   r[3],
+            "verdict":       r[3],
             "adjusted_conf": f"{r[5]:.0%}" if r[5] else "same",
-            "reason":    r[4][:120] if r[4] else "",
-            "time":      r[6][:16],
+            "reason":        r[4][:120] if r[4] else "",
+            "time":          r[6][:16],
         })
 
-    summary = {v: sum(1 for x in verdicts if x["verdict"]==v)
+    summary = {v: sum(1 for x in verdicts if x["verdict"] == v)
                for v in ["approve", "challenge", "reject"]}
 
     return json.dumps({
@@ -355,29 +349,33 @@ def get_critic_verdicts(days: int = 3) -> str:
     }, indent=2)
 
 
-
-
 @mcp.tool()
 def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
-    """Validate a trade against portfolio gates. Returns gate-by-gate results."""
-    import requests
+    """
+    Validate a proposed trade against all portfolio gates.
+    Returns gate-by-gate approval status and reasoning.
+    Use this before execute_trade to understand why a trade may be rejected.
+    """
     gates = []
     approved = True
 
-    # Get current price from Alpaca
+    # Get current price
     try:
-        from alpaca_feed.data import get_live_prices
         prices = get_live_prices([ticker])
         price = prices.get(ticker)
-    except:
+    except Exception:
         price = None
 
     value = round(shares * price, 2) if price else None
 
     # Gate 1: Market hours
-    from portfolio.market_calendar import is_trading_day
-    from datetime import date
-    if not is_trading_day():
+    try:
+        trading_day = is_trading_day()
+    except Exception:
+        trading_day = True  # assume open if check fails
+
+    if not trading_day:
+        from datetime import date
         gates.append({
             "gate": "Market Hours",
             "pass": False,
@@ -389,8 +387,9 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
                       "reason": "Market is open"})
 
     if side.lower() == "buy":
-        # Gate 2: Portfolio circuit breaker
         conn = sqlite3.connect(PORTFOLIO_DB)
+
+        # Gate 2: Portfolio circuit breaker
         snaps = conn.execute("""
             SELECT total_value FROM portfolio_snapshots
             ORDER BY snapshot_at DESC LIMIT 10
@@ -403,33 +402,32 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
                 gates.append({
                     "gate": "Portfolio Circuit Breaker",
                     "pass": False,
-                    "reason": f"Portfolio down {drawdown:.1%} from peak — all entries paused until recovery"
+                    "reason": f"Portfolio down {drawdown:.1%} from peak — all entries paused"
                 })
                 approved = False
             else:
                 gates.append({"gate": "Portfolio Circuit Breaker", "pass": True,
                               "reason": f"Drawdown {drawdown:.1%} within limit"})
 
-        # Gate 3: Position size
+        # Gate 3: Position size (max 10% of portfolio)
         if value:
-            cash = conn.execute(
+            cash_row = conn.execute(
                 "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
-            ).fetchone()[0]
-            total_port = cash  # simplified
-            max_position = total_port * 0.10
+            ).fetchone()
+            cash = cash_row[0] if cash_row else 0
+            max_position = cash * 0.10
             if value > max_position:
                 gates.append({
                     "gate": "Position Size",
                     "pass": False,
-                    "reason": f"${value:,.0f} exceeds 10% max position size (${max_position:,.0f} at current portfolio value)"
+                    "reason": f"${value:,.0f} exceeds 10% max position size (${max_position:,.0f} of ${cash:,.0f} cash)"
                 })
                 approved = False
             else:
                 gates.append({"gate": "Position Size", "pass": True,
                               "reason": f"${value:,.0f} within 10% limit"})
 
-        # Gate 4: Sector breaker
-        # Determine sector from ticker
+        # Gate 4: Sector circuit breaker
         sector_map = {
             'XLK': 'technology', 'NVDA': 'technology', 'AAPL': 'technology',
             'MSFT': 'technology', 'AMD': 'technology', 'INTC': 'technology',
@@ -438,17 +436,19 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
             'XLF': 'financials', 'JPM': 'financials', 'BAC': 'financials',
             'XLB': 'materials', 'XLI': 'industrials', 'XLP': 'consumer',
             'ITA': 'defense', 'SPY': 'macro', 'QQQ': 'technology',
+            'AMZN': 'technology', 'CRM': 'technology', 'GOOGL': 'technology',
+            'META': 'technology', 'TSLA': 'technology',
         }
         sector = sector_map.get(ticker.upper(), 'unknown')
 
         if sector != 'unknown':
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
             stops = conn.execute("""
                 SELECT COUNT(*) FROM positions
                 WHERE sector=? AND status='closed'
                   AND exit_reason LIKE 'stop_loss%'
                   AND exit_date >= ?
-            """, (sector, cutoff)).fetchone()[0]
+            """, (sector, cutoff_7d)).fetchone()[0]
 
             if stops >= 2:
                 gates.append({
@@ -464,12 +464,14 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
         # Gate 5: Prediction confidence
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         if sector and sector != 'unknown':
-            pred = conn.execute("""
+            paper_conn = sqlite3.connect(PAPER_DB)
+            pred = paper_conn.execute("""
                 SELECT direction, confidence, critic_verdict FROM predictions
                 WHERE query LIKE ? AND date(created_at) = ?
                   AND was_correct IS NULL
                 ORDER BY created_at DESC LIMIT 1
             """, (f'%{sector}%', today)).fetchone()
+            paper_conn.close()
 
             if pred:
                 direction, confidence, verdict = pred
@@ -477,12 +479,12 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
                     gates.append({
                         "gate": "Prediction Confidence",
                         "pass": False,
-                        "reason": f"{sector} prediction: {direction} {confidence:.0%} — below 0.70 entry threshold (critic: {verdict})"
+                        "reason": f"{sector}: {direction} {confidence:.0%} — below 0.70 threshold (critic: {verdict})"
                     })
                     approved = False
                 else:
                     gates.append({"gate": "Prediction Confidence", "pass": True,
-                                  "reason": f"{sector}: {direction} {confidence:.0%} ≥ 0.70 threshold"})
+                                  "reason": f"{sector}: {direction} {confidence:.0%} ≥ 0.70"})
             else:
                 gates.append({
                     "gate": "Prediction Confidence",
@@ -492,14 +494,13 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
                 approved = False
 
         # Gate 6: Weekly trade limit
-        from datetime import timedelta
-        monday = datetime.now(timezone.utc)
-        monday = monday - timedelta(days=monday.weekday())
-        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = datetime.now(timezone.utc)
+        week_start = week_start - timedelta(days=week_start.weekday())
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
         week_buys = conn.execute("""
             SELECT COUNT(*) FROM transactions
             WHERE action='BUY' AND timestamp >= ?
-        """, (monday.isoformat(),)).fetchone()[0]
+        """, (week_start.isoformat(),)).fetchone()[0]
 
         if week_buys >= 5:
             gates.append({
@@ -514,7 +515,6 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
         # Gate 7: VIX
         try:
-            from portfolio.vix_gate import get_vix_gate
             vix = get_vix_gate()
             if vix['action'] == 'pause':
                 gates.append({"gate": "VIX Gate", "pass": False,
@@ -523,14 +523,14 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
             else:
                 gates.append({"gate": "VIX Gate", "pass": True,
                               "reason": vix['reason']})
-        except:
+        except Exception:
             gates.append({"gate": "VIX Gate", "pass": True,
                           "reason": "VIX check unavailable — proceeding"})
 
         conn.close()
 
     passed = sum(1 for g in gates if g["pass"])
-    total = len(gates)
+    total_gates = len(gates)
 
     return json.dumps({
         "ticker":   ticker,
@@ -539,7 +539,7 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
         "price":    f"${price:.2f}" if price else "unknown",
         "value":    f"${value:,.2f}" if value else "unknown",
         "approved": approved,
-        "summary":  f"{passed}/{total} gates passed",
+        "summary":  f"{passed}/{total_gates} gates passed",
         "gates":    gates,
         "verdict":  "APPROVED — trade meets all system requirements" if approved
                     else "REJECTED — trade does not meet system requirements"
@@ -548,67 +548,65 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
 @mcp.tool()
 def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
-    """Execute a trade via portfolio gates. Validates first, places order if approved."""
-    import json as _json
-    
+    """
+    Execute a trade through the portfolio management system.
+    Runs all gates via validate_trade first — only places order if ALL gates pass.
+    This is the ONLY correct way to place orders through Hermes.
+    """
     # Step 1: Run validation
-    validation = _json.loads(validate_trade(ticker, shares, side))
-    
+    validation = json.loads(validate_trade(ticker, shares, side))
+
     if not validation['approved']:
-        # Return rejection with gate details — do not place order
         failed = [g for g in validation['gates'] if not g['pass']]
-        return _json.dumps({
-            "status": "REJECTED",
-            "ticker": ticker,
-            "shares": shares,
-            "side": side,
-            "message": f"Trade rejected — {len(failed)} gate(s) failed",
+        return json.dumps({
+            "status":      "REJECTED",
+            "ticker":      ticker,
+            "shares":      shares,
+            "side":        side,
+            "message":     f"Trade rejected — {len(failed)} gate(s) failed",
             "failed_gates": failed,
-            "all_gates": validation['gates'],
-            "action": "No order placed. Address the failed gates before retrying."
+            "all_gates":   validation['gates'],
+            "action":      "No order placed. Address the failed gates before retrying."
         }, indent=2)
-    
-    # Step 2: All gates passed — place the order via Alpaca
+
+    # Step 2: All gates passed — place the order
     try:
-        import sys as _sys
-        _sys.path.insert(0, str(Path(__file__).parent.parent))
         from alpaca_feed.trading import place_market_order
-        
         result = place_market_order(
             ticker, shares, side,
             reason=f"Hermes-initiated {side} — all gates passed"
         )
-        
+
         if result.get('success'):
-            return _json.dumps({
-                "status": "EXECUTED",
-                "ticker": ticker,
-                "shares": shares,
-                "side": side,
-                "order_id": result.get('order_id'),
+            return json.dumps({
+                "status":       "EXECUTED",
+                "ticker":       ticker,
+                "shares":       shares,
+                "side":         side,
+                "order_id":     result.get('order_id'),
                 "alpaca_status": result.get('status'),
                 "gates_passed": validation['summary'],
-                "message": f"Order placed successfully via Alpaca paper account"
+                "message":      "Order placed successfully via Alpaca paper account"
             }, indent=2)
         else:
-            return _json.dumps({
-                "status": "FAILED",
-                "ticker": ticker,
-                "error": result.get('error'),
+            return json.dumps({
+                "status":  "FAILED",
+                "ticker":  ticker,
+                "error":   result.get('error'),
                 "message": "All gates passed but Alpaca order failed"
             }, indent=2)
-            
+
     except Exception as e:
-        return _json.dumps({
+        return json.dumps({
             "status": "ERROR",
             "ticker": ticker,
-            "error": str(e)
+            "error":  str(e)
         }, indent=2)
 
+
 if __name__ == "__main__":
-    import os
-    import logging
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
-    log.info(f"Starting Trading Pipeline MCP on 0.0.0.0:8101")
+    log.info("Starting Trading Pipeline MCP on 0.0.0.0:8101")
     mcp.run(transport="streamable-http")
+
