@@ -604,6 +604,102 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
         }, indent=2)
 
 
+
+@mcp.tool()
+def get_latest_weekly_report() -> str:
+    """
+    Get the most recent weekly performance report.
+    Contains P&L, win rate, sector breakdown, key mistakes, and lessons learned.
+    Use this for deeper analysis before approving trade recommendations.
+    """
+    import glob
+    report_dir = Path("/mnt/qnap/timeseries/reports/weekly")
+    reports = sorted(glob.glob(str(report_dir / "*.md")))
+    if not reports:
+        return json.dumps({"error": "No weekly reports found"})
+    latest = reports[-1]
+    content = Path(latest).read_text()
+    filename = Path(latest).name
+    date = filename.replace("_weekly.md", "")
+    return json.dumps({
+        "report_date": date,
+        "filename": filename,
+        "content": content[:8000]  # cap at 8K chars
+    }, indent=2)
+
+
+@mcp.tool()
+def get_latest_monthly_report() -> str:
+    """
+    Get the most recent monthly performance report.
+    Contains comprehensive P&L analysis, prediction accuracy by sector,
+    key mistakes, root causes, and strategic recommendations.
+    Essential for long-term trend analysis before major decisions.
+    """
+    import glob
+    report_dir = Path("/mnt/qnap/timeseries/reports/monthly")
+    reports = sorted(glob.glob(str(report_dir / "*.md")))
+    if not reports:
+        return json.dumps({"error": "No monthly reports found"})
+    latest = reports[-1]
+    content = Path(latest).read_text()
+    filename = Path(latest).name
+    date = filename.replace("_monthly.md", "")
+    return json.dumps({
+        "report_date": date,
+        "filename": filename,
+        "content": content[:12000]  # cap at 12K chars
+    }, indent=2)
+
+
+@mcp.tool()
+def get_trade_history(days: int = 30) -> str:
+    """
+    Get recent closed trade history with outcomes.
+    Shows what worked, what didn't, and patterns across sectors.
+    Use this alongside reports for trade approval decisions.
+    """
+    conn = sqlite3.connect(PORTFOLIO_DB)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = conn.execute("""
+        SELECT ticker, sector, shares, entry_price, exit_price,
+               pnl, exit_reason, entry_date, exit_date
+        FROM positions
+        WHERE status='closed' AND exit_date >= ?
+        ORDER BY exit_date DESC
+        LIMIT 30
+    """, (cutoff,)).fetchall()
+    conn.close()
+
+    trades = []
+    for r in rows:
+        pnl_pct = ((r[4] - r[3]) / r[3] * 100) if r[3] and r[4] else 0
+        trades.append({
+            "ticker":      r[0],
+            "sector":      r[1],
+            "shares":      r[2],
+            "entry":       f"${r[3]:.2f}",
+            "exit":        f"${r[4]:.2f}" if r[4] else "open",
+            "pnl":         f"${r[5]:+.2f}" if r[5] else "$0",
+            "pnl_pct":     f"{pnl_pct:+.1f}%",
+            "exit_reason": r[6] or "",
+            "held":        f"{r[7][:10]} → {r[8][:10]}" if r[8] else r[7][:10],
+            "outcome":     "WIN" if (r[5] or 0) > 0 else "LOSS"
+        })
+
+    wins = sum(1 for t in trades if t["outcome"] == "WIN")
+    total_pnl = sum(float(t["pnl"].replace("$","").replace("+","")) for t in trades)
+
+    return json.dumps({
+        "days": days,
+        "total_trades": len(trades),
+        "wins": wins,
+        "losses": len(trades) - wins,
+        "win_rate": f"{wins/len(trades)*100:.0f}%" if trades else "0%",
+        "total_pnl": f"${total_pnl:+.2f}",
+        "trades": trades
+    }, indent=2)
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
