@@ -700,9 +700,84 @@ def get_trade_history(days: int = 30) -> str:
         "trades": trades
     }, indent=2)
 
+
+@mcp.tool()
+def get_organic_account_info() -> str:
+    """
+    Get account info for the organic trading account (account #1).
+    This is the autonomous pipeline account active since May 2026.
+    Use this to see the long-running portfolio history.
+    """
+    try:
+        from alpaca.trading.client import TradingClient
+        import os
+        client = TradingClient(
+            os.getenv("ALPACA_API_KEY"),
+            os.getenv("ALPACA_SECRET_KEY"),
+            paper=True
+        )
+        account = client.get_account()
+        positions = client.get_all_positions()
+        pos_list = [{
+            'ticker': p.symbol,
+            'qty': float(p.qty),
+            'avg_cost': float(p.avg_entry_price),
+            'market_value': float(p.market_value),
+            'unrealized_pl': float(p.unrealized_pl),
+            'unrealized_plpc': f"{float(p.unrealized_plpc)*100:+.1f}%",
+            'current_price': float(p.current_price),
+        } for p in positions]
+        return json.dumps({
+            'account': 'organic',
+            'account_number': account.account_number,
+            'cash': float(account.cash),
+            'portfolio_value': float(account.portfolio_value),
+            'positions': pos_list,
+            'open_positions': len(pos_list),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_hackathon_account_info() -> str:
+    """
+    Get account info for the hackathon demo account (PA3Y2DOOQXZW).
+    This is the clean account started Aug 28, 2026 for the hackathon.
+    Use this to see positions placed via Hermes or mirrored from organic.
+    """
+    try:
+        from alpaca.trading.client import TradingClient
+        import os
+        client = TradingClient(
+            os.getenv("ALPACA_HACKATHON_KEY"),
+            os.getenv("ALPACA_HACKATHON_SECRET"),
+            paper=True
+        )
+        account = client.get_account()
+        positions = client.get_all_positions()
+        pos_list = [{
+            'ticker': p.symbol,
+            'qty': float(p.qty),
+            'avg_cost': float(p.avg_entry_price),
+            'market_value': float(p.market_value),
+            'unrealized_pl': float(p.unrealized_pl),
+            'unrealized_plpc': f"{float(p.unrealized_plpc)*100:+.1f}%",
+            'current_price': float(p.current_price),
+        } for p in positions]
+        return json.dumps({
+            'account': 'hackathon',
+            'account_number': account.account_number,
+            'cash': float(account.cash),
+            'portfolio_value': float(account.portfolio_value),
+            'positions': pos_list,
+            'open_positions': len(pos_list),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
     log.info("Starting Trading Pipeline MCP on 0.0.0.0:8101")
     mcp.run(transport="streamable-http")
-
