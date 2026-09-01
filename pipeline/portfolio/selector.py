@@ -393,7 +393,7 @@ def generate_recommendations(predictions: list[dict],
         # being overridden by marginal confidence scores.
         sector_win_rates = {
             "technology": 0.44, "energy": 0.38, "healthcare": 0.35,
-            "consumer": 0.30, "industrials": 0.29, "macro": 0.28,
+            "consumer": 0.30, "industrials": 0.14, "macro": 0.28,
             "materials": 0.27, "financials": 0.21, "defense": 0.50,
         }
         sector_win_rate = sector_win_rates.get(sector, 0.40)
@@ -418,7 +418,7 @@ def generate_recommendations(predictions: list[dict],
         # adjusted = raw × (1 - sector_penalty)
         sector_penalties = {
             "technology": 0.10, "energy": 0.10, "healthcare": 0.20,
-            "consumer": 0.20, "industrials": 0.20, "macro": 0.20,
+            "consumer": 0.20, "industrials": 0.35, "macro": 0.20,
             "materials": 0.20, "financials": 0.20, "defense": 0.0,
         }
         penalty = sector_penalties.get(sector, 0.10)
