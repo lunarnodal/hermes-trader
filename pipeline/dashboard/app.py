@@ -284,6 +284,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
     <div class="card" draggable="true" id="card-sentiment">
       <div class="card-header">
         <span class="card-title">Sentiment (48h)</span>
+        <div id="vixDisplay" style="margin-top:4px;font-size:12px"></div>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="chart-wrap" style="height:160px">
@@ -381,7 +382,8 @@ async function loadData() {
     statusText.textContent = `${pausedSectors.join(', ')} paused — rotating sectors`;
   } else {
     badge.className = 'status-badge status-active';
-    statusText.textContent = 'Trading active';
+    const vixVal = vix.vix ? ` · VIX ${vix.vix.toFixed(1)}` : '';
+    statusText.textContent = `Trading active${vixVal}`;
   }
 
   // Last run
@@ -702,6 +704,14 @@ async function loadData() {
       }
     }
   });
+
+  // VIX display in sentiment card
+  const vixDisplay = document.getElementById('vixDisplay');
+  if (vixDisplay && vix.vix) {
+    const vixColor = vix.action === 'pause' ? '#f85149' : 
+                     vix.action === 'reduce' ? '#e3b341' : '#3fb950';
+    vixDisplay.innerHTML = `<span style="color:${vixColor};font-weight:600">VIX ${vix.vix.toFixed(1)}</span> <span style="color:#8b949e;font-size:11px">— ${vix.reason.split('—')[1]?.trim() || vix.action}</span>`;
+  }
 
   // Closed positions table
   document.getElementById('closedBody').innerHTML = closed.length
