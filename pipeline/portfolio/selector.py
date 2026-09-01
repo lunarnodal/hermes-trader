@@ -417,8 +417,8 @@ def generate_recommendations(predictions: list[dict],
         # Hermes analysis: calibration adjustments exist but weren't applied to scores
         # adjusted = raw × (1 - sector_penalty)
         sector_penalties = {
-            "technology": 0.10, "energy": 0.10, "healthcare": 0.20,
-            "consumer": 0.20, "industrials": 0.35, "macro": 0.20,
+            "technology": 0.10, "energy": 0.05, "healthcare": 0.05,
+            "consumer": 0.05, "industrials": 0.35, "macro": 0.20,
             "materials": 0.20, "financials": 0.20, "defense": 0.0,
         }
         penalty = sector_penalties.get(sector, 0.10)
