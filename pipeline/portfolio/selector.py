@@ -380,6 +380,23 @@ def generate_recommendations(predictions: list[dict],
                 sector = s
                 break
 
+        # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
+        # Hermes analysis (2026-08-31): challenge verdict reduces confidence but doesn't
+        # block execution. This gate prevents the critic's "weak sector" warnings from
+        # being overridden by marginal confidence scores.
+        sector_win_rates = {
+            "technology": 0.44, "energy": 0.38, "healthcare": 0.35,
+            "consumer": 0.30, "industrials": 0.29, "macro": 0.28,
+            "materials": 0.27, "financials": 0.21, "defense": 0.50,
+        }
+        sector_win_rate = sector_win_rates.get(sector, 0.40)
+        if sector_win_rate < 0.35 and direction == "bullish" and confidence < 0.65:
+            log.info(
+                f"HARD BLOCK {sector}: win_rate={sector_win_rate:.0%} < 35%, "
+                f"bullish, conf={confidence:.0%} < 65% — auto-reject"
+            )
+            continue
+
         # Get stock recommendations for this sector
         stocks = select_stocks_for_sector(sector, confidence, signals,
                                               exclude_tickers=open_tickers)
