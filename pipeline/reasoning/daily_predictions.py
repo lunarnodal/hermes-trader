@@ -25,56 +25,68 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DAILY_QUERIES = [
-    {
-        "query":     "Energy sector outlook — oil, gas, utilities, renewables",
-        "timeframe": "24h",
-        "limit":     15,
-        "label":     "energy"
-    },
-    {
-        "query":     "Technology and AI sector outlook — semiconductors, ai infrastructure, data centers",
-        "timeframe": "24h",
-        "limit":     15,
-        "label":     "technology_ai"
-    },
-    {
-        "query":     "Financial sector outlook — banks, rates, real estate, macro",
-        "timeframe": "24h",
-        "limit":     15,
-        "label":     "financials"
-    },
-    {
-        "query":     "Healthcare and biotech sector outlook",
-        "timeframe": "24h",
-        "limit":     10,
-        "label":     "healthcare"
-    },
-    {
-        "query":     "Materials and mining sector outlook — metals, chemicals, commodities",
-        "timeframe": "24h",
-        "limit":     12,
-        "label":     "materials"
-    },
-    {
-        "query":     "Industrials sector outlook — defense, aerospace, manufacturing, infrastructure",
-        "timeframe": "24h",
-        "limit":     12,
-        "label":     "industrials"
-    },
-    {
-        "query":     "Consumer sector outlook — retail, discretionary, staples, e-commerce",
-        "timeframe": "24h",
-        "limit":     12,
-        "label":     "consumer"
-    },
-    {
-        "query":     "Overall market outlook — S&P 500, macro environment, geopolitical risks",
-        "timeframe": "24h",
-        "limit":     12,
-        "label":     "market_overview"
-    },
-]
+def _build_daily_queries() -> list[dict]:
+    """
+    Build daily prediction queries with current date context injected.
+    Prevents stale query syndrome — same static string returning same
+    cached/stale signal matches day after day.
+    """
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    dow = datetime.now().strftime("%A")
+
+    return [
+        {
+            "query":     f"Energy sector outlook as of {today} — oil, gas, utilities, renewables, recent price moves",
+            "timeframe": "24h",
+            "limit":     15,
+            "label":     "energy"
+        },
+        {
+            "query":     f"Technology and AI sector outlook {today} {dow} — semiconductors, ai infrastructure, data centers, recent earnings",
+            "timeframe": "24h",
+            "limit":     15,
+            "label":     "technology_ai"
+        },
+        {
+            "query":     f"Financial sector outlook {today} — banks, interest rates, real estate, Fed policy, recent macro",
+            "timeframe": "24h",
+            "limit":     15,
+            "label":     "financials"
+        },
+        {
+            "query":     f"Healthcare and biotech sector outlook {today} — drug approvals, clinical trials, recent news",
+            "timeframe": "24h",
+            "limit":     10,
+            "label":     "healthcare"
+        },
+        {
+            "query":     f"Materials and mining sector outlook {today} — metals, chemicals, commodities, supply chain",
+            "timeframe": "24h",
+            "limit":     12,
+            "label":     "materials"
+        },
+        {
+            "query":     f"Industrials sector outlook {today} — defense, aerospace, manufacturing, infrastructure spending",
+            "timeframe": "24h",
+            "limit":     12,
+            "label":     "industrials"
+        },
+        {
+            "query":     f"Consumer sector outlook {today} — retail, discretionary, staples, e-commerce, spending trends",
+            "timeframe": "24h",
+            "limit":     12,
+            "label":     "consumer"
+        },
+        {
+            "query":     f"Overall market outlook {today} {dow} — S&P 500, macro environment, geopolitical risks, Fed",
+            "timeframe": "24h",
+            "limit":     12,
+            "label":     "market_overview"
+        },
+    ]
+
+# DAILY_QUERIES built fresh at runtime in run_daily_predictions()
 
 
 def run_daily_predictions() -> None:
@@ -105,7 +117,8 @@ def run_daily_predictions() -> None:
         log.warning(f"Calibration report error: {e}")
 
     results = []
-    for q in DAILY_QUERIES:
+    daily_queries = _build_daily_queries()  # fresh date each run
+    for q in daily_queries:
         log.info(f"── Predicting: {q['label']} ──")
         for attempt in range(3):
             try:
