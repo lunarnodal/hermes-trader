@@ -416,6 +416,29 @@ def generate_recommendations(predictions: list[dict],
             )
         confidence = adjusted_confidence
 
+        # Direction-specific calibration (from predictions DB, 2026-08-31)
+        # bullish: 448 predictions, 34% win rate
+        # neutral: 32 predictions, 31% win rate
+        # bearish: 48 predictions, 21% win rate
+        # mixed:   20 predictions,  0% win rate
+        direction_penalties = {
+            "bullish": 0.15,
+            "neutral": 0.15,
+            "bearish": 0.25,
+            "mixed":   1.00,  # hard block — 0% win rate
+        }
+        dir_penalty = direction_penalties.get(direction, 0.15)
+        if dir_penalty >= 1.0:
+            log.info(f"HARD BLOCK direction={direction} — 0% historical win rate")
+            continue
+        dir_adjusted = confidence * (1 - dir_penalty)
+        if dir_adjusted != confidence:
+            log.info(
+                f"Direction correction {direction}: {confidence:.0%} × {1-dir_penalty:.2f} "
+                f"= {dir_adjusted:.0%} (penalty={dir_penalty:.0%})"
+            )
+        confidence = dir_adjusted
+
         # Get stock recommendations for this sector
         stocks = select_stocks_for_sector(sector, confidence, signals,
                                               exclude_tickers=open_tickers)
