@@ -118,8 +118,49 @@ def run_daily_predictions() -> None:
 
     results = []
     daily_queries = _build_daily_queries()  # fresh date each run
+
+    # Load repeating failure history once
+    import sqlite3 as _sql
+    _db = Path(__file__).parent.parent / "data" / "paper_trading.db"
+
+    def _check_repeating_failure(query: str, label: str) -> str | None:
+        """Returns a warning string if this query has been wrong 3+ times recently."""
+        try:
+            _conn = _sql.connect(_db)
+            sector_hint = label.replace("_", " ")
+            rows = _conn.execute("""
+                SELECT direction, was_correct, confidence
+                FROM predictions
+                WHERE query LIKE ? AND was_correct IS NOT NULL
+                  AND confidence >= 0.70
+                ORDER BY created_at DESC LIMIT 10
+            """, (f"%{sector_hint}%",)).fetchall()
+            _conn.close()
+            if len(rows) < 3:
+                return None
+            recent_wrongs = sum(1 for r in rows[:5] if r[1] == 0)
+            if recent_wrongs >= 3:
+                directions = [r[0] for r in rows[:5] if r[1] == 0]
+                most_common = max(set(directions), key=directions.count)
+                return (
+                    f"REPEATING FAILURE ALERT: This sector query has been wrong "
+                    f"{recent_wrongs}/5 recent times at high confidence. "
+                    f"Most common wrong direction: {most_common}. "
+                    f"Apply extra skepticism — the model may be pattern-matching stale narratives."
+                )
+        except Exception:
+            return None
+        return None
+
     for q in daily_queries:
         log.info(f"── Predicting: {q['label']} ──")
+        # Check for repeating failure pattern
+        failure_warning = _check_repeating_failure(q["query"], q["label"])
+        if failure_warning:
+            log.warning(f"REPEATING FAILURE: {q['label']} — {failure_warning[:80]}")
+            # Inject warning into query to force extra skepticism
+            q = dict(q)
+            q["query"] = q["query"] + f" [WARNING: {failure_warning}]"
         for attempt in range(3):
             try:
                 result = run_prediction(
