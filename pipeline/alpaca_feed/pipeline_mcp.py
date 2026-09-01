@@ -776,6 +776,53 @@ def get_hackathon_account_info() -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
+@mcp.tool()
+def get_signal_ledger(days: int = 7) -> str:
+    """
+    Get recently rejected signals from the signal ledger.
+    Shows which predictions were blocked and why — enables outcome analysis.
+    Use this to evaluate whether rejected signals would have been profitable.
+    """
+    conn = sqlite3.connect(PAPER_DB)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = conn.execute("""
+        SELECT sector, direction, raw_confidence, adj_confidence,
+               gate_failed, gate_reason, created_at,
+               next_day_drift, was_correct
+        FROM signal_ledger
+        WHERE created_at >= ?
+        ORDER BY created_at DESC
+        LIMIT 50
+    """, (cutoff,)).fetchall()
+    conn.close()
+
+    signals = []
+    for r in rows:
+        signals.append({
+            "sector":       r[0],
+            "direction":    r[1],
+            "raw_conf":     f"{r[2]:.0%}",
+            "adj_conf":     f"{r[3]:.0%}",
+            "gate":         r[4],
+            "reason":       r[5][:80] if r[5] else "",
+            "time":         r[6][:16],
+            "next_drift":   f"{r[7]:+.1%}" if r[7] else "pending",
+            "was_correct":  r[8],
+        })
+
+    gate_counts = {}
+    for s in signals:
+        gate_counts[s["gate"]] = gate_counts.get(s["gate"], 0) + 1
+
+    return json.dumps({
+        "days": days,
+        "total_rejected": len(signals),
+        "by_gate": gate_counts,
+        "signals": signals
+    }, indent=2)
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
