@@ -1,3 +1,0 @@
-[submodule "infra/docker/openclaw-src"]
-	path = infra/docker/openclaw-src
-	url = https://github.com/openclaw/openclaw.git
