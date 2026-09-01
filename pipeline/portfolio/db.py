@@ -332,14 +332,29 @@ def open_position(conn: sqlite3.Connection, ticker: str, sector: str,
         log.warning(f"Insufficient cash: need ${value:.2f}, have ${cash:.2f}")
         return -1
 
-    # Use tiered stop loss based on position type
-    # Determine type from ticker — ETFs are known symbols
+    # Dynamic stop loss based on sector volatility
+    # Hermes rec 2026-08-31: static stops get head-faked in volatile sectors
     ETF_TICKERS = {"SPY","QQQ","XLE","XLK","XLF","XLV","XLU","XLI","XLB",
                    "XLP","XLY","ITA","VNQ","SOXX","AIQ","XOP","MOO","DJP"}
     if ticker.upper() in ETF_TICKERS:
-        sl_pct = CONFIG["stop_loss_by_type"]["etf"]
+        base_sl_pct = CONFIG["stop_loss_by_type"]["etf"]
     else:
-        sl_pct = CONFIG["stop_loss_by_type"]["stock"]
+        base_sl_pct = CONFIG["stop_loss_by_type"]["stock"]
+
+    # Sector volatility multipliers — high vol sectors get more room
+    sector_vol_multipliers = {
+        "technology":  1.5,
+        "energy":      1.4,
+        "materials":   1.3,
+        "financials":  1.2,
+        "healthcare":  1.1,
+        "consumer":    1.0,
+        "industrials": 1.0,
+        "defense":     0.9,
+        "macro":       0.8,
+    }
+    vol_mult = sector_vol_multipliers.get(sector, 1.0)
+    sl_pct = min(base_sl_pct * vol_mult, 0.10)  # cap at 10%
 
     stop_loss   = round(entry_price * (1 - sl_pct), 2)
     take_profit = round(entry_price * (1 + CONFIG["profit_tiers"][0][0]), 2)
