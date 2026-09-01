@@ -302,17 +302,39 @@ def check_time_exits(conn, dry_run: bool = False) -> list[dict]:
             (hold_days, pos["id"])
         )
 
-        if hold_days >= CONFIG["max_hold_days"]:
+        # Volatility-adaptive hold period (Hermes recommendation 2026-08-31)
+        # Low VIX (<15): extend hold — trends persist longer
+        # Normal VIX (15-20): use configured max_hold_days
+        # Elevated VIX (20-25): shorten hold — cut losers faster
+        # High VIX (>25): shorten significantly — protect capital
+        try:
+            from portfolio.vix_gate import get_vix
+            vix = get_vix() or 18.0
+        except Exception:
+            vix = 18.0
+
+        if vix < 15:
+            adaptive_hold = int(CONFIG["max_hold_days"] * 1.4)   # extend 40%
+        elif vix < 20:
+            adaptive_hold = CONFIG["max_hold_days"]               # normal
+        elif vix < 25:
+            adaptive_hold = int(CONFIG["max_hold_days"] * 0.75)  # shorten 25%
+        else:
+            adaptive_hold = int(CONFIG["max_hold_days"] * 0.50)  # shorten 50%
+
+        if hold_days >= adaptive_hold:
             ticker        = pos["ticker"]
             current_price = fetch_current_price(ticker) or pos["entry_price"]
             pnl_pct       = (current_price - pos["entry_price"]) / pos["entry_price"] * 100
-            reason        = f"time_exit ({hold_days} days, {pnl_pct:+.1f}%)"
+            reason        = f"time_exit ({hold_days} days, {pnl_pct:+.1f}%, VIX={vix:.1f})"
 
             log.info(f"TIME EXIT: {ticker} held {hold_days} days "
-                     f"P&L={pnl_pct:+.1f}%")
+                     f"P&L={pnl_pct:+.1f}% VIX={vix:.1f} "
+                     f"adaptive_hold={adaptive_hold} days")
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
                 _alpaca_mirror("SELL", ticker, pos["shares"], reason)
+                _alpaca_mirror_hackathon("SELL", ticker, pos["shares"], reason)
                 actions.append({"action": "SELL", "reason": "time_exit", **result})
 
     conn.commit()
