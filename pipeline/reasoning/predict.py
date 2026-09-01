@@ -155,15 +155,25 @@ def query_qdrant(query: str, limit: int = 15,
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
     vector = embed_query(query)
 
-    # Build optional sentiment filter
-    query_filter = None
-    if sentiment_filter:
-        query_filter = Filter(
-            must=[FieldCondition(
-                key="sentiment",
-                match=MatchValue(value=sentiment_filter)
-            )]
+    # Build filters — recency + optional sentiment
+    from datetime import datetime, timezone, timedelta
+    from qdrant_client.models import DatetimeRange, Range
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+
+    must_conditions = [
+        FieldCondition(
+            key="published",
+            range=DatetimeRange(gte=cutoff)
         )
+    ]
+    if sentiment_filter:
+        must_conditions.append(FieldCondition(
+            key="sentiment",
+            match=MatchValue(value=sentiment_filter)
+        ))
+
+    query_filter = Filter(must=must_conditions)
 
     results = client.query_points(
         collection_name=COLLECTION,
@@ -255,7 +265,7 @@ def run_prediction(query: str, timeframe: str = "24h",
     log.info(f"Sector hints from query: {sector_hints}")
 
     # Query Qdrant
-    signals = query_qdrant(query, limit=limit, sector_hint=sector_hints or None)
+    signals = query_qdrant(query, limit=limit, sector_hint=sector_hints or None, hours_back=168)  # 7 days
     if not signals:
         log.warning("No signals found for query")
         return {"error": "No relevant signals found"}
