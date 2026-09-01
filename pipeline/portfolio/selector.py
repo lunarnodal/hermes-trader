@@ -359,6 +359,12 @@ def generate_recommendations(predictions: list[dict],
         # Only act on bullish predictions with sufficient confidence
         if direction != "bullish" or confidence < 0.70:
             log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
+            _log_rejected_signal(
+                sector="unknown", query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="direction_confidence",
+                reason=f"direction={direction} conf={confidence:.2f} < 0.70"
+            )
             continue
 
         # Extract sector from query
@@ -397,6 +403,13 @@ def generate_recommendations(predictions: list[dict],
                 f"HARD BLOCK {sector}: win_rate={sector_win_rate:.0%} < 35%, "
                 f"bullish, conf={confidence:.0%} < 65% — auto-reject"
             )
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="hard_block",
+                reason=f"win_rate={sector_win_rate:.0%} < 35%, conf={confidence:.0%} < 65%",
+                sector_win_rate=sector_win_rate
+            )
             continue
 
         # Meta-correction: adjust confidence by sector win rate
@@ -414,6 +427,14 @@ def generate_recommendations(predictions: list[dict],
                 f"Meta-correction {sector}: {confidence:.0%} × {1-penalty:.2f} "
                 f"= {adjusted_confidence:.0%} (penalty={penalty:.0%})"
             )
+            if adjusted_confidence < 0.70:
+                _log_rejected_signal(
+                    sector=sector, query=query, direction=direction,
+                    raw_conf=confidence, adj_conf=adjusted_confidence,
+                    gate="meta_correction",
+                    reason=f"raw={confidence:.0%} adj={adjusted_confidence:.0%} < 0.70 after sector penalty",
+                    sector_win_rate=sector_win_rate
+                )
         confidence = adjusted_confidence
 
         # Direction-specific calibration (from predictions DB, 2026-08-31)
@@ -430,6 +451,13 @@ def generate_recommendations(predictions: list[dict],
         dir_penalty = direction_penalties.get(direction, 0.15)
         if dir_penalty >= 1.0:
             log.info(f"HARD BLOCK direction={direction} — 0% historical win rate")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=0.0,
+                gate="direction_hard_block",
+                reason=f"direction={direction} has 0% historical win rate",
+                sector_win_rate=sector_win_rate
+            )
             continue
         dir_adjusted = confidence * (1 - dir_penalty)
         if dir_adjusted != confidence:
