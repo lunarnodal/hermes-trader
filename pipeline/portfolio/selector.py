@@ -390,12 +390,31 @@ def generate_recommendations(predictions: list[dict],
             "materials": 0.27, "financials": 0.21, "defense": 0.50,
         }
         sector_win_rate = sector_win_rates.get(sector, 0.40)
+
+        # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
         if sector_win_rate < 0.35 and direction == "bullish" and confidence < 0.65:
             log.info(
                 f"HARD BLOCK {sector}: win_rate={sector_win_rate:.0%} < 35%, "
                 f"bullish, conf={confidence:.0%} < 65% — auto-reject"
             )
             continue
+
+        # Meta-correction: adjust confidence by sector win rate
+        # Hermes analysis: calibration adjustments exist but weren't applied to scores
+        # adjusted = raw × (1 - sector_penalty)
+        sector_penalties = {
+            "technology": 0.10, "energy": 0.10, "healthcare": 0.20,
+            "consumer": 0.20, "industrials": 0.20, "macro": 0.20,
+            "materials": 0.20, "financials": 0.20, "defense": 0.0,
+        }
+        penalty = sector_penalties.get(sector, 0.10)
+        adjusted_confidence = confidence * (1 - penalty)
+        if adjusted_confidence != confidence:
+            log.info(
+                f"Meta-correction {sector}: {confidence:.0%} × {1-penalty:.2f} "
+                f"= {adjusted_confidence:.0%} (penalty={penalty:.0%})"
+            )
+        confidence = adjusted_confidence
 
         # Get stock recommendations for this sector
         stocks = select_stocks_for_sector(sector, confidence, signals,
