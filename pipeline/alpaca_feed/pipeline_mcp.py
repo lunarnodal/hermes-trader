@@ -823,6 +823,63 @@ def get_signal_ledger(days: int = 7) -> str:
         "signals": signals
     }, indent=2)
 
+
+@mcp.tool()
+def get_idle_cash_analysis() -> str:
+    """
+    Analyze idle cash opportunity cost.
+    Shows how long cash has been uninvested and estimated yield loss vs BIL.
+    Flags when cash has been idle 5+ days with no new positions opened.
+    """
+    conn = sqlite3.connect(PORTFOLIO_DB)
+
+    cash_row = conn.execute(
+        "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    cash = cash_row[0] if cash_row else 0
+
+    # Days since last BUY
+    last_buy = conn.execute("""
+        SELECT MAX(entry_date) FROM positions WHERE status='open'
+    """).fetchone()[0]
+
+    if last_buy:
+        from datetime import date
+        last_buy_date = date.fromisoformat(last_buy[:10])
+        idle_days = (date.today() - last_buy_date).days
+    else:
+        idle_days = 0
+
+    # BIL yield ~4.28% annual (from weekly report shadow position)
+    annual_yield = 0.0428
+    daily_yield = annual_yield / 252
+    lost_yield_daily = cash * daily_yield
+    lost_yield_week = lost_yield_daily * 5
+    lost_yield_month = lost_yield_daily * 21
+
+    # Check open positions count
+    open_count = conn.execute(
+        "SELECT COUNT(*) FROM positions WHERE status='open'"
+    ).fetchone()[0]
+    conn.close()
+
+    alert = idle_days >= 5 and open_count < 6
+
+    return json.dumps({
+        "cash_balance":      f"${cash:,.2f}",
+        "idle_days":         idle_days,
+        "open_positions":    open_count,
+        "opportunity_cost": {
+            "daily":   f"${lost_yield_daily:,.2f}",
+            "weekly":  f"${lost_yield_week:,.2f}",
+            "monthly": f"${lost_yield_month:,.2f}",
+            "annual_rate": "4.28% (BIL equivalent)",
+        },
+        "alert": alert,
+        "alert_reason": f"Cash idle {idle_days} days with only {open_count} positions" if alert else None,
+        "recommendation": "Consider BIL/SHV deployment or lower confidence threshold" if alert else "Normal"
+    }, indent=2)
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
