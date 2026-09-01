@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-SPARK_LLAMA_HOST = os.getenv("SPARK_LLAMA_HOST", "http://172.29.11.225:8080")
+SPARK_LLAMA_HOST = os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083")
 DISCOVERY_MODEL   = os.getenv("REASONING_MODEL", "deepseek-r1")
 SIGNALS_DIR       = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
 LOOKBACK_DAYS     = 7

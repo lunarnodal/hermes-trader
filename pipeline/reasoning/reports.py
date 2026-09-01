@@ -37,7 +37,7 @@ PORTFOLIO_DB = Path("/home/trading/trading-ai/data/portfolio.db")
 REPORTS_DIR = Path("/mnt/qnap/timeseries/reports")
 
 SPARK_HOST  = os.getenv("SPARK_LLAMA_HOST",
-              os.getenv("SPARK_OLLAMA_HOST", "http://172.29.11.225:8080"))
+              os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083"))
 MODEL       = "deepseek-r1"
 
 
