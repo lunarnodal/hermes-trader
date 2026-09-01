@@ -68,6 +68,7 @@ SECTOR_ETFS = {
 
 # Minimum signals required to buy individual stock vs ETF
 MIN_SIGNALS_FOR_STOCK = 2
+MIN_SIGNALS_BEARISH_OVERRIDE = 3  # bearish signals needed to suppress bullish entry
 
 
 def get_recent_signals(hours_back: int = 48) -> list[dict]:
@@ -473,6 +474,18 @@ def generate_recommendations(predictions: list[dict],
 
         for stock in stocks:
             ticker = stock["ticker"]
+
+            # Bearish signal suppression (Hermes rec #9 2026-08-31)
+            # If bearish signals >= MIN_SIGNALS_BEARISH_OVERRIDE, suppress bullish entry
+            # Even though we only trade bullish, strong bearish signals are a warning
+            bearish_count = stock.get("bearish", 0)
+            bullish_count = stock.get("bullish", 0)
+            if bearish_count >= MIN_SIGNALS_BEARISH_OVERRIDE and bearish_count >= bullish_count:
+                log.info(
+                    f"BEARISH SUPPRESSION {ticker}: {bearish_count} bearish vs "
+                    f"{bullish_count} bullish signals — suppressing entry"
+                )
+                continue
 
             # Skip if already holding
             if ticker in open_tickers:
