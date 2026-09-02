@@ -19,6 +19,7 @@ vectorstore/
 # ─── Secrets and credentials ──────────────────────────────
 .env
 .env.*
+!pipeline/.env.example
 *.key
 secrets/
 config/credentials*
