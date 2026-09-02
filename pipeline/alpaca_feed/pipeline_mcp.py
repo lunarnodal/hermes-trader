@@ -880,6 +880,211 @@ def get_idle_cash_analysis() -> str:
         "recommendation": "Consider BIL/SHV deployment or lower confidence threshold" if alert else "Normal"
     }, indent=2)
 
+
+@mcp.tool()
+def get_pipeline_health() -> str:
+    """
+    Get a comprehensive pipeline health report.
+    Shows rule counts by status, recent parse errors, signal ingestion
+    rates, and any bottlenecks. Use this before creating Kanban tasks
+    to verify findings with actual data.
+    """
+    import glob
+    from pathlib import Path
+
+    result = {}
+
+    # Rule status breakdown
+    try:
+        rules_conn = sqlite3.connect("/home/trading/trading-ai/data/rules.db")
+        rule_status = rules_conn.execute(
+            "SELECT status, COUNT(*) FROM inference_rules GROUP BY status"
+        ).fetchall()
+        rules_conn.close()
+        result["inference_rules"] = {row[0]: row[1] for row in rule_status}
+    except Exception as e:
+        result["inference_rules"] = {"error": str(e)}
+
+    # Indirect dependencies count
+    try:
+        lessons_conn = sqlite3.connect("/home/trading/trading-ai/data/lessons.db")
+        dep_count = lessons_conn.execute(
+            "SELECT COUNT(*) FROM indirect_dependencies"
+        ).fetchone()[0]
+        result["indirect_dependencies"] = dep_count
+        lessons_conn.close()
+    except Exception as e:
+        result["indirect_dependencies"] = {"error": str(e)}
+
+    # Signal counts by day for last 7 days
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Filter, FieldCondition, DatetimeRange
+        client = QdrantClient(host="localhost", port=6333)
+        signal_counts = {}
+        for days_back in [1, 3, 7, 14, 30]:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+            count = client.count(
+                collection_name="trading_signals",
+                count_filter=Filter(must=[FieldCondition(
+                    key="published",
+                    range=DatetimeRange(gte=cutoff)
+                )])
+            )
+            signal_counts[f"last_{days_back}_days"] = count.count
+        result["qdrant_signals"] = signal_counts
+    except Exception as e:
+        result["qdrant_signals"] = {"error": str(e)}
+
+    # Parse error count from score log
+    try:
+        score_log = Path("/mnt/qnap/timeseries/logs/score.log")
+        if score_log.exists():
+            lines = score_log.read_text().splitlines()
+            total_errors = sum(1 for l in lines if "Parse error" in l)
+            recent_errors = sum(1 for l in lines
+                if "Parse error" in l and
+                datetime.now().strftime("%Y-%m") in l)
+            result["parse_errors"] = {
+                "total_all_time": total_errors,
+                "this_month": recent_errors
+            }
+    except Exception as e:
+        result["parse_errors"] = {"error": str(e)}
+
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_prediction_accuracy(days: int = 7) -> str:
+    """
+    Get prediction accuracy breakdown by sector and direction for the last N days.
+    Shows win rates, correct/incorrect counts, and confidence averages.
+    Use this to identify which sectors are systematically over or under-performing.
+    """
+    conn = sqlite3.connect(PAPER_DB)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = conn.execute("""
+        SELECT
+            substr(query, 1, 30) as sector_hint,
+            direction,
+            COUNT(*) as total,
+            SUM(CASE WHEN was_correct=1 THEN 1 ELSE 0 END) as correct,
+            AVG(confidence) as avg_conf,
+            AVG(critic_confidence) as avg_critic_conf
+        FROM predictions
+        WHERE created_at >= ? AND was_correct IS NOT NULL
+        GROUP BY sector_hint, direction
+        ORDER BY total DESC
+    """, (cutoff,)).fetchall()
+    conn.close()
+
+    sectors = []
+    for r in rows:
+        win_rate = r[3]/r[2] if r[2] > 0 else 0
+        sectors.append({
+            "sector": r[0],
+            "direction": r[1],
+            "total": r[2],
+            "correct": r[3],
+            "win_rate": f"{win_rate:.0%}",
+            "avg_confidence": f"{r[4]:.0%}" if r[4] else "n/a",
+            "avg_critic_confidence": f"{r[5]:.0%}" if r[5] else "n/a",
+        })
+
+    return json.dumps({
+        "days": days,
+        "sectors": sectors,
+        "total_predictions": sum(s["total"] for s in sectors),
+        "overall_win_rate": f"{sum(s['correct'] for s in sectors)/max(sum(s['total'] for s in sectors),1):.0%}"
+    }, indent=2)
+
+
+@mcp.tool()
+def get_indirect_dependencies(limit: int = 30) -> str:
+    """
+    Get the current indirect dependency rules — cross-sector and cross-ticker
+    causal relationships the system has learned.
+    Use this during causality analysis to avoid proposing duplicate rules.
+    """
+    try:
+        conn = sqlite3.connect("/home/trading/trading-ai/data/lessons.db")
+        rows = conn.execute("""
+            SELECT id, from_entity, to_entity, relationship, confidence, occurrences, last_seen
+            FROM indirect_dependencies
+            ORDER BY confidence DESC, occurrences DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        conn.close()
+
+        deps = [{
+            "id": r[0],
+            "from": r[1],
+            "to": r[2],
+            "relationship": r[3][:120],
+            "confidence": r[4],
+            "occurrences": r[5],
+            "last_seen": r[6][:10] if r[6] else None
+        } for r in rows]
+
+        return json.dumps({
+            "total_rules": len(deps),
+            "dependencies": deps
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_signal_event_breakdown(days: int = 7) -> str:
+    """
+    Get a breakdown of recent signals by event_type and source.
+    Use this during signal classification review to identify
+    how many signals are tagged as 'other' vs specific categories.
+    """
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Filter, FieldCondition, DatetimeRange
+        client = QdrantClient(host="localhost", port=6333)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        results, _ = client.scroll(
+            collection_name="trading_signals",
+            limit=2000,
+            with_payload=True,
+            scroll_filter=Filter(must=[FieldCondition(
+                key="published",
+                range=DatetimeRange(gte=cutoff)
+            )])
+        )
+
+        from collections import Counter
+        event_types = Counter(p.payload.get("event_type", "unknown") for p in results)
+        sources = Counter(p.payload.get("source", "unknown") for p in results)
+
+        # Sample of "other" tagged signals for review
+        other_samples = [
+            {
+                "title": p.payload.get("title", "")[:80],
+                "tickers": p.payload.get("tickers", []),
+                "source": p.payload.get("source", ""),
+                "published": p.payload.get("published", "")[:10]
+            }
+            for p in results
+            if p.payload.get("event_type") == "other"
+        ][:20]
+
+        return json.dumps({
+            "days": days,
+            "total_signals_sampled": len(results),
+            "by_event_type": dict(event_types.most_common()),
+            "by_source": dict(sources.most_common()),
+            "other_samples": other_samples
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
