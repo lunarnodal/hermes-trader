@@ -70,7 +70,9 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "other"
+  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
 - macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
 - summary: max 2 sentence plain English summary of market impact
 
@@ -90,7 +92,9 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "other"
+  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
 - macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
 - summary: max 2 sentence plain English summary of market impact
 
@@ -119,7 +123,8 @@ Example output:
 {"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","macro_themes":["earnings_miss"],"summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}
 
 Example with cross-sector inference:
-{"sentiment":"bearish","confidence":0.78,"tickers":[],"sectors":["geopolitical","energy","oil_gas","defense","commodities"],"event_type":"geopolitical","summary":"Military strikes escalate regional conflict. Energy supply disruption risk elevated, defense sector demand increases."}"""
+{"sentiment":"bearish","confidence":0.78,"tickers":[],"sectors":["geopolitical","energy","oil_gas","defense","commodities"],"event_type":"geopolitical","summary":"Military strikes escalate regional conflict. Energy supply disruption risk elevated, defense sector demand increases."}
+{"sentiment":"neutral","confidence":0.65,"tickers":["AAPL"],"sectors":["technology"],"event_type":"leadership_transition","macro_themes":["succession_risk","management_change"],"summary":"Apple CEO Tim Cook stepping down. John Ternus named successor. Market reaction depends on transition smoothness and new leadership strategy."}"""
 
 
 def build_prompt(article: dict) -> str:
