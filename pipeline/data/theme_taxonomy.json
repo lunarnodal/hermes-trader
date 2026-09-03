@@ -11346,6 +11346,8 @@
     "global_trade_strategy",
     "reserve_buildup",
     "charitable_giving",
-    "retirement_savings_growth"
+    "retirement_savings_growth",
+    "internal_controls",
+    "conflict_minerals"
   ]
 }

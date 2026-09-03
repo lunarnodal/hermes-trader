@@ -197,75 +197,67 @@ def run_discovery() -> None:
             propose_rule(conn, trigger, sectors, evidence)
 
     # Promote proposals seen 1+ times (occurrence_count >= threshold)
-# Financial relevance filter: discard non-financial noise before promotion
-FINANCIAL_KEYWORDS = {
-    # Markets & trading
-    "stock", "market", "equity", "shares", "trading", "investor",
-    "bull", "bear", "rally", "selloff", "volatility", "index",
-    # Macro & policy
-    "fed", "federal reserve", "interest rate", "inflation", "gdp",
-    "recession", "monetary", "fiscal", "treasury", "bond", "yield",
-    "bank", "central bank", "rate",
-    # Corporate
-    "earnings", "revenue", "profit", "merger", "acquisition", "ipo",
-    "dividend", "buyback", "guidance", "forecast", "analyst",
-    "ceo", "cfo", "executive", "leadership", "board",
-    # Sectors
-    "energy", "oil", "gas", "semiconductor", "ai", "healthcare",
-    "biotech", "pharma", "fintech", "crypto", "ev", "defense",
-    "retail", "consumer", "industrial", "manufacturing",
-    # Supply chain & trade
-    "supply chain", "tariff", "trade", "export", "import",
-    "sanctions", "regulation", "compliance",
-    # Commodities
-    "gold", "silver", "lithium", "copper", "commodity",
-    # Legal / fraud
-    "fraud", "geopolitical",
-    # Vehicles
-    "vehicle", "electric vehicle"
-}
 
-def is_financial_relevant(trigger, sectors):
-    text = (trigger + " " + sectors).lower()
-    return any(kw in text for kw in FINANCIAL_KEYWORDS)
-
-    PROMOTION_THRESHOLD = 1
-    try:
-        from datetime import datetime, timezone as _tz
-        _now = datetime.now(_tz.utc).isoformat()
-        to_promote = conn.execute("""
-            SELECT id, trigger, sectors FROM rule_proposals
-            WHERE status = 'pending' AND occurrence_count >= ?
-        """, (PROMOTION_THRESHOLD,)).fetchall()
-        newly_promoted = 0
-        for prop_id, trigger, sectors in to_promote:
-            if not is_financial_relevant(trigger, sectors):
-                conn.execute(
-                    "UPDATE rule_proposals SET status='rejected', approved_at=? WHERE id=?",
-                    (_now, prop_id)
-                )
-                log.info(f"Filtered rule (not financial): '{trigger}'")
-                continue
-            exists = conn.execute(
-                "SELECT 1 FROM inference_rules WHERE trigger = ?", (trigger,)
-            ).fetchone()
-            if not exists:
-                conn.execute("""
-                    INSERT INTO inference_rules
-                    (trigger, sectors, confidence, source, created_at, updated_at)
-                    VALUES (?, ?, 0.70, 'discovered', ?, ?)
-                """, (trigger, sectors, _now, _now))
-                log.info(f"Promoted rule: '{trigger}'")
-                newly_promoted += 1
-            conn.execute(
-                "UPDATE rule_proposals SET status='approved', approved_at=? WHERE id=?",
-                (_now, prop_id)
-            )
-        conn.commit()
-    except Exception as _e:
-        log.warning(f"Promotion failed: {_e}")
-        newly_promoted = 0
-
+        # Financial relevance filter: discard non-financial noise before promotion
+            FINANCIAL_KEYWORDS = {
+                "stock", "market", "equity", "shares", "trading", "investor",
+                "bull", "bear", "rally", "selloff", "volatility", "index",
+                "fed", "federal reserve", "interest rate", "inflation", "gdp",
+                "recession", "monetary", "fiscal", "treasury", "bond", "yield",
+                "bank", "central bank", "rate",
+                "earnings", "revenue", "profit", "merger", "acquisition", "ipo",
+                "dividend", "buyback", "guidance", "forecast", "analyst",
+                "ceo", "cfo", "executive", "leadership", "board",
+                "energy", "oil", "gas", "semiconductor", "ai", "healthcare",
+                "biotech", "pharma", "fintech", "crypto", "ev", "defense",
+                "retail", "consumer", "industrial", "manufacturing",
+                "supply chain", "tariff", "trade", "export", "import",
+                "sanctions", "regulation", "compliance",
+                "gold", "silver", "lithium", "copper", "commodity",
+                "fraud", "geopolitical",
+                "vehicle", "electric vehicle"
+            }
+        
+            def is_financial_relevant(trigger, sectors):
+                text = (trigger + " " + sectors).lower()
+                return any(kw in text for kw in FINANCIAL_KEYWORDS)
+        
+            PROMOTION_THRESHOLD = 1
+            try:
+                from datetime import datetime, timezone as _tz
+                _now = datetime.now(_tz.utc).isoformat()
+                to_promote = conn.execute("""
+                    SELECT id, trigger, sectors FROM rule_proposals
+                    WHERE status = 'pending' AND occurrence_count >= ?
+                """, (PROMOTION_THRESHOLD,)).fetchall()
+                newly_promoted = 0
+                for prop_id, trigger, sectors in to_promote:
+                    if not is_financial_relevant(trigger, sectors):
+                        conn.execute(
+                            "UPDATE rule_proposals SET status='rejected', approved_at=?"
+                            " WHERE id = ?", (_now, prop_id)
+                        )
+                        log.info(f"Filtered rule (not financial): '{trigger}'")
+                        continue
+                    exists = conn.execute(
+                        "SELECT 1 FROM inference_rules WHERE trigger = ?", (trigger,)
+                    ).fetchone()
+                    if not exists:
+                        conn.execute("""
+                            INSERT INTO inference_rules
+                            (trigger, sectors, confidence, source, created_at, approved_at)
+                            VALUES (?, ?, 0.70, 'discovered', ?, ?)
+                        """, (trigger, sectors, _now, _now))
+                        log.info(f"Promoted rule: '{trigger}'")
+                        newly_promoted += 1
+                    conn.execute(
+                        "UPDATE rule_proposals SET status='approved', approved_at=?"
+                        " WHERE id = ?", (_now, prop_id)
+                    )
+                conn.commit()
+            except Exception as _e:
+                log.warning(f"Promotion failed: {_e}")
+                newly_promoted = 0
     pending  = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'"
     ).fetchone()[0]
