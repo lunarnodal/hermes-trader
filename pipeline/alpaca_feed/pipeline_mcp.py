@@ -1085,6 +1085,48 @@ def get_signal_event_breakdown(days: int = 7) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+
+@mcp.tool()
+def get_sector_trim() -> str:
+    """
+    Get current sector fuel trim state — LTFT and STFT for all sectors.
+    LTFT: long-term trim (accumulated baseline, changes slowly)
+    STFT: short-term trim (recent correction, resets nightly)
+    Combined penalty = abs(LTFT + STFT)
+    Use this to understand why a sector's confidence is being adjusted
+    and how the dynamic calibration is evolving over time.
+    """
+    try:
+        import sqlite3
+        conn = sqlite3.connect("/home/trading/trading-ai/data/paper_trading.db")
+        rows = conn.execute("""
+            SELECT sector, ltft, stft, learning_rate, updated_at
+            FROM sector_trim
+            ORDER BY ltft ASC
+        """).fetchall()
+        conn.close()
+
+        sectors = []
+        for r in rows:
+            combined = r[1] + r[2]
+            sectors.append({
+                "sector":        r[0],
+                "ltft":          round(r[1], 4),
+                "stft":          round(r[2], 4),
+                "combined":      round(combined, 4),
+                "penalty_pct":   f"{abs(combined):.1%}",
+                "learning_rate": r[3],
+                "updated_at":    r[4][:16] if r[4] else None,
+                "trend":         "tightening" if r[2] < 0 else "loosening" if r[2] > 0 else "stable"
+            })
+
+        return json.dumps({
+            "sectors": sectors,
+            "note": "LTFT absorbs STFT nightly at 5AM ET. Negative = penalty applied to confidence."
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
