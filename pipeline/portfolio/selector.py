@@ -413,15 +413,30 @@ def generate_recommendations(predictions: list[dict],
             )
             continue
 
-        # Meta-correction: adjust confidence by sector win rate
-        # Hermes analysis: calibration adjustments exist but weren't applied to scores
-        # adjusted = raw × (1 - sector_penalty)
-        sector_penalties = {
+        # Meta-correction: adjust confidence by sector trim (LTFT + STFT)
+        # Dynamic fuel-trim system — LTFT absorbs STFT over time
+        # Falls back to hardcoded defaults if DB unavailable
+        _default_penalties = {
             "technology": 0.10, "energy": 0.05, "healthcare": 0.05,
             "consumer": 0.05, "industrials": 0.35, "macro": 0.20,
             "materials": 0.20, "financials": 0.20, "defense": 0.0,
         }
-        penalty = sector_penalties.get(sector, 0.10)
+        try:
+            import sqlite3 as _sql
+            _tconn = _sql.connect(str(Path(__file__).parent.parent.parent / "data" / "paper_trading.db"))
+            _trim = _tconn.execute(
+                "SELECT ltft, stft FROM sector_trim WHERE sector=?", (sector,)
+            ).fetchone()
+            _tconn.close()
+            if _trim:
+                # Combined trim — LTFT is negative (penalty), STFT adjusts up or down
+                penalty = abs(_trim[0] + _trim[1])
+                log.debug(f"Trim {sector}: LTFT={_trim[0]:+.3f} STFT={_trim[1]:+.3f} → penalty={penalty:.3f}")
+            else:
+                penalty = _default_penalties.get(sector, 0.10)
+        except Exception as _te:
+            log.warning(f"Trim DB read failed (using default): {_te}")
+            penalty = _default_penalties.get(sector, 0.10)
         adjusted_confidence = confidence * (1 - penalty)
         if adjusted_confidence != confidence:
             log.info(
