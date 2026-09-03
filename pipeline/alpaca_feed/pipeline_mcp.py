@@ -251,6 +251,21 @@ def get_recent_signals(sector: str = "", limit: int = 5) -> str:
                 must=[FieldCondition(key="sectors", match=MatchText(text=sector))]
             )
 
+        # Filter to last 7 days only
+        from qdrant_client.models import DatetimeRange
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+        recency_condition = FieldCondition(
+            key="published",
+            range=DatetimeRange(gte=cutoff)
+        )
+
+        if filter_conditions:
+            filter_conditions.must.append(recency_condition)
+        else:
+            filter_conditions = Filter(must=[recency_condition])
+
         results = client.scroll(
             collection_name="trading_signals",
             scroll_filter=filter_conditions,
