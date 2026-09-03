@@ -165,7 +165,7 @@ def propose_rule(conn: sqlite3.Connection, trigger: str,
 
     conn.commit()
     # Auto-promote to active rule after threshold
-    if count >= 5:
+    if count >= 2:
         promote_proposal(conn, trigger)
 
 
