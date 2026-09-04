@@ -337,6 +337,33 @@ def select_stocks_for_sector(sector: str,
     return recommendations
 
 
+def _log_rejected_signal(sector: str, query: str, direction: str,
+                          raw_conf: float, adj_conf: float,
+                          gate: str, reason: str,
+                          sector_win_rate: float = None, vix: float = None) -> None:
+    """Write rejected signal to ledger for future outcome tracking."""
+    try:
+        import sqlite3
+        from datetime import datetime, timezone
+        _db = Path(__file__).parent.parent.parent / "data" / "paper_trading.db"
+        conn = sqlite3.connect(str(_db))
+        conn.execute("""
+            INSERT INTO signal_ledger
+              (created_at, query, sector, direction, raw_confidence,
+               adj_confidence, gate_failed, gate_reason, sector_win_rate, vix_at_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now(timezone.utc).isoformat(),
+            query, sector, direction,
+            raw_conf, adj_conf, gate, reason,
+            sector_win_rate, vix
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        log.warning(f"Signal ledger write failed (non-fatal): {e}")
+
+
 def generate_recommendations(predictions: list[dict],
                               signals: list[dict],
                               open_positions: list[dict],
