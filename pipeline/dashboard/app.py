@@ -67,6 +67,8 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   .card{background:#111827;border:1px solid #1f2937;border-radius:8px;padding:16px;
         cursor:grab;user-select:none;transition:border-color 0.15s}
   .card:active{cursor:grabbing}
+  .card:hover{border-color:#059669}
+  .card:focus-within{border-color:#10B981}
   .card.drag-over{border-color:#10B981;background:#111827}
   .card.dragging{opacity:0.4;border-color:#10B981}
   .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
@@ -85,7 +87,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   .badge-mix{background:#422006;color:#FBBF24}
   .correct{color:#10B981} .wrong{color:#EF4444} .pending{color:#8b949e}
   .timestamp{color:#8b949e;font-size:11px}
-  .bar-bg{background:#111827;border-radius:3px;height:6px;flex:1}
+  .bar-bg{background:#111827;border:1px solid #1f2937;border-radius:3px;height:6px;flex:1}
   .bar-fill{border-radius:3px;height:6px;transition:width 0.3s}
   details summary{cursor:pointer;font-size:12px;color:#8b949e;padding:8px 0;
                   border-top:1px solid #111827;margin-top:8px;list-style:none}
@@ -95,7 +97,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   .activity-item{display:flex;justify-content:space-between;align-items:center;
                  padding:5px 0;border-bottom:1px solid #111827;font-size:12px}
   .activity-item:last-child{border-bottom:none}
-  .pred-card{background:#111827;border:1px solid #111827;border-radius:6px;
+  .pred-card{background:#111827;border:1px solid #1f2937;border-radius:6px;
              padding:8px 12px;margin-bottom:6px}
   .pred-row{display:flex;justify-content:space-between;align-items:center}
   .pred-sector{font-size:12px;color:#e6edf3;margin-bottom:4px}
