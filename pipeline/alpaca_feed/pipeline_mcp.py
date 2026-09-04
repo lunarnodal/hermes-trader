@@ -271,7 +271,7 @@ def get_recent_signals(sector: str = "", limit: int = 5) -> str:
             scroll_filter=filter_conditions,
             limit=limit,
             with_payload=True,
-            order_by="timestamp"
+            order_by="published"
         )
 
         signals = []
