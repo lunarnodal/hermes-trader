@@ -39,63 +39,63 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-       background:#111827;color:#e6edf3;min-height:100vh;font-size:13px}
-  a{color:#10B981}
-  .header{background:#111827;border-bottom:1px solid #1f2937;
+       background:#0d1117;color:#e6edf3;min-height:100vh;font-size:13px}
+  a{color:#58a6ff}
+  .header{background:#161b22;border-bottom:1px solid #30363d;
           padding:12px 20px;display:flex;align-items:center;justify-content:space-between;
           position:sticky;top:0;z-index:100}
   .header h1{font-size:16px;font-weight:600}
   .header-right{display:flex;align-items:center;gap:12px}
   .status-badge{display:flex;align-items:center;gap:6px;font-size:12px;
                 padding:4px 10px;border-radius:20px;font-weight:500}
-  .status-active{background:#064e3b;color:#10B981;border:1px solid #059669}
-  .status-macro{background:#451a03;color:#FBBF24;border:1px solid #D97706}
-  .status-breaker{background:#450a0a;color:#EF4444;border:1px solid #DC2626}
+  .status-active{background:#1a3a2a;color:#3fb950;border:1px solid #238636}
+  .status-macro{background:#3a2a0a;color:#d29922;border:1px solid #9e6a03}
+  .status-breaker{background:#3a1a1a;color:#f85149;border:1px solid #da3633}
   .status-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
   .last-run{font-size:11px;color:#8b949e}
   .metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:16px 20px}
-  .metric{background:#111827;border:1px solid #1f2937;border-radius:8px;padding:14px}
+  .metric{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
   .metric-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
   .metric-value{font-size:22px;font-weight:600}
   .metric-sub{font-size:11px;color:#8b949e;margin-top:3px}
-  .green{color:#10B981} .red{color:#EF4444} .yellow{color:#FBBF24} .blue{color:#10B981} .gray{color:#8b949e}
+  .green{color:#3fb950} .red{color:#f85149} .yellow{color:#d29922} .blue{color:#58a6ff} .gray{color:#8b949e}
   .grid{display:grid;gap:12px;padding:0 20px 20px}
   .grid-2{grid-template-columns:1fr 1fr}
   .grid-3{grid-template-columns:1fr 1fr 1fr}
   .grid-1-2{grid-template-columns:1fr 2fr}
   .grid-2-1{grid-template-columns:2fr 1fr}
-  .card{background:#111827;border:1px solid #1f2937;border-radius:8px;padding:16px;
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;
         cursor:grab;user-select:none;transition:border-color 0.15s}
   .card:active{cursor:grabbing}
-  .card.drag-over{border-color:#10B981;background:#111827}
-  .card.dragging{opacity:0.4;border-color:#10B981}
+  .card.drag-over{border-color:#58a6ff;background:#1c2128}
+  .card.dragging{opacity:0.4;border-color:#58a6ff}
   .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .card-title{font-size:13px;font-weight:600;color:#e6edf3}
-  .drag-handle{font-size:16px;color:#1f2937;cursor:grab;line-height:1}
+  .drag-handle{font-size:16px;color:#30363d;cursor:grab;line-height:1}
   .drag-handle:hover{color:#8b949e}
   table{width:100%;border-collapse:collapse}
   th{font-size:11px;color:#8b949e;font-weight:400;text-align:left;
-     padding:0 0 6px;border-bottom:1px solid #111827}
-  td{padding:6px 0;border-bottom:1px solid #111827;vertical-align:middle}
+     padding:0 0 6px;border-bottom:1px solid #21262d}
+  td{padding:6px 0;border-bottom:1px solid #21262d;vertical-align:middle}
   tr:last-child td{border-bottom:none}
   .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500}
-  .badge-bull{background:#064e3b;color:#10B981}
-  .badge-bear{background:#450a0a;color:#EF4444}
-  .badge-neut{background:#111827;color:#8b949e;border:1px solid #1f2937}
-  .badge-mix{background:#422006;color:#FBBF24}
-  .correct{color:#10B981} .wrong{color:#EF4444} .pending{color:#8b949e}
+  .badge-bull{background:#1a3a2a;color:#3fb950}
+  .badge-bear{background:#3a1a1a;color:#f85149}
+  .badge-neut{background:#1c2128;color:#8b949e;border:1px solid #30363d}
+  .badge-mix{background:#2a2a1a;color:#d29922}
+  .correct{color:#3fb950} .wrong{color:#f85149} .pending{color:#8b949e}
   .timestamp{color:#8b949e;font-size:11px}
-  .bar-bg{background:#111827;border-radius:3px;height:6px;flex:1}
+  .bar-bg{background:#21262d;border-radius:3px;height:6px;flex:1}
   .bar-fill{border-radius:3px;height:6px;transition:width 0.3s}
   details summary{cursor:pointer;font-size:12px;color:#8b949e;padding:8px 0;
-                  border-top:1px solid #111827;margin-top:8px;list-style:none}
+                  border-top:1px solid #21262d;margin-top:8px;list-style:none}
   details summary::-webkit-details-marker{display:none}
   details summary::before{content:"▶ ";font-size:10px}
   details[open] summary::before{content:"▼ "}
   .activity-item{display:flex;justify-content:space-between;align-items:center;
-                 padding:5px 0;border-bottom:1px solid #111827;font-size:12px}
+                 padding:5px 0;border-bottom:1px solid #21262d;font-size:12px}
   .activity-item:last-child{border-bottom:none}
-  .pred-card{background:#111827;border:1px solid #111827;border-radius:6px;
+  .pred-card{background:#0d1117;border:1px solid #21262d;border-radius:6px;
              padding:8px 12px;margin-bottom:6px}
   .pred-row{display:flex;justify-content:space-between;align-items:center}
   .pred-sector{font-size:12px;color:#e6edf3;margin-bottom:4px}
@@ -165,8 +165,8 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="legend">
-        <span><span class="legend-dot" style="background:#10B981"></span>Value</span>
-        <span><span class="legend-dot" style="background:#1f2937;border:1px dashed #8b949e"></span>$50k baseline</span>
+        <span><span class="legend-dot" style="background:#58a6ff"></span>Value</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>$50k baseline</span>
       </div>
       <div class="chart-wrap" style="height:160px">
         <canvas id="pnlChart" role="img" aria-label="Portfolio value over time">Portfolio value chart</canvas>
@@ -179,8 +179,8 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="legend">
-        <span><span class="legend-dot" style="background:#EF4444"></span>Win rate</span>
-        <span><span class="legend-dot" style="background:#1f2937;border:1px dashed #8b949e"></span>50% target</span>
+        <span><span class="legend-dot" style="background:#f85149"></span>Win rate</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>50% target</span>
       </div>
       <div class="chart-wrap" style="height:160px">
         <canvas id="winChart" role="img" aria-label="Win rate trend over time">Win rate chart</canvas>
@@ -330,7 +330,7 @@ function dirBadge(d) {
 }
 
 let pnlChartInst, winChartInst, sectorChartInst, sentChartInst;
-const SECTOR_COLORS = ['#10B981','#10B981','#FBBF24','#EF4444','#bc8cff','#79c0ff','#56d364','#ffa657'];
+const SECTOR_COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0ff','#56d364','#ffa657'];
 
 async function loadData() {
   const data = await fetch('/api/data').then(r => r.json());
@@ -373,9 +373,9 @@ async function loadData() {
     statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — reduced position sizes`;
   } else if (!marketOpen) {
     badge.className = 'status-badge';
-    badge.style.background = '#111827';
+    badge.style.background = '#1c2128';
     badge.style.color = '#8b949e';
-    badge.style.border = '1px solid #1f2937';
+    badge.style.border = '1px solid #30363d';
     statusText.textContent = isWeekday ? 'Market closed' : 'Weekend — market closed';
   } else if (pausedSectors.length > 0) {
     badge.className = 'status-badge status-macro';
@@ -433,14 +433,14 @@ async function loadData() {
         {
           label: 'Portfolio',
           data: pnlVals,
-          borderColor: '#10B981',
-          backgroundColor: 'rgba(16,185,129,0.08)',
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.08)',
           fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2
         },
         {
           label: 'Baseline',
           data: pnlLabels.map(() => 50000),
-          borderColor: '#1f2937',
+          borderColor: '#30363d',
           borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
         }
       ]
@@ -450,10 +450,10 @@ async function loadData() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 8 },
-             grid: { color: '#1f2937' } },
+             grid: { color: '#21262d' } },
         y: { ticks: { color: '#8b949e', font: { size: 10 },
                       callback: v => fmtK(v) },
-             grid: { color: '#1f2937' } }
+             grid: { color: '#21262d' } }
       }
     }
   });
@@ -483,15 +483,15 @@ async function loadData() {
         {
           label: 'Win rate',
           data: wkRates,
-          borderColor: '#EF4444',
-          backgroundColor: 'rgba(239,68,68,0.08)',
+          borderColor: '#f85149',
+          backgroundColor: 'rgba(248,81,73,0.08)',
           fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
           spanGaps: true
         },
         {
           label: '50% target',
           data: wkLabels.map(() => 50),
-          borderColor: '#1f2937',
+          borderColor: '#30363d',
           borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
         }
       ]
@@ -501,11 +501,11 @@ async function loadData() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: '#8b949e', font: { size: 10 } },
-             grid: { color: '#1f2937' } },
+             grid: { color: '#21262d' } },
         y: { min: 0, max: 100,
              ticks: { color: '#8b949e', font: { size: 10 },
                       callback: v => v + '%' },
-             grid: { color: '#1f2937' } }
+             grid: { color: '#21262d' } }
       }
     }
   });
@@ -520,12 +520,12 @@ async function loadData() {
       const useLive  = p.live_price != null;
       const pnl      = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
       const liveTag  = useLive
-        ? '<span style="font-size:9px;color:#10B981;margin-left:3px">●</span>'
+        ? '<span style="font-size:9px;color:#3fb950;margin-left:3px">●</span>'
         : '';
       const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
       const tiers = p.tiers_triggered || 0;
       const tierBadge = tiers > 0
-        ? `<span style="background:#1a2a3a;color:#10B981;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
+        ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
         : '—';
       return `<tr>
         <td style="font-weight:600">${p.ticker}${liveTag}</td>
@@ -550,7 +550,7 @@ async function loadData() {
   const cashVal = data.portfolio?.cash || 0;
   const sectorLabels = [...Object.keys(positionsBySector), 'Cash'];
   const sectorVals   = [...Object.values(positionsBySector), cashVal];
-  const sectorColors = SECTOR_COLORS.slice(0, sectorLabels.length - 1).concat(['#422006']);
+  const sectorColors = SECTOR_COLORS.slice(0, sectorLabels.length - 1).concat(['#21262d']);
 
   if (sectorChartInst) sectorChartInst.destroy();
   sectorChartInst = new Chart(document.getElementById('sectorChart'), {
@@ -641,7 +641,7 @@ async function loadData() {
   const maxSector = Math.max(...sectors.map(s => s.count), 1);
   document.getElementById('sectorBars').innerHTML = sectors.map(s => {
     const w = Math.round(s.count / maxSector * 100);
-    const col = s.bias === 'bullish' ? '#10B981' : s.bias === 'bearish' ? '#EF4444' : '#8b949e';
+    const col = s.bias === 'bullish' ? '#3fb950' : s.bias === 'bearish' ? '#f85149' : '#8b949e';
     const breaker = breakers[s.sector] || {};
     const paused  = breaker.paused;
     const stops   = breaker.stops || 0;
@@ -655,12 +655,12 @@ async function loadData() {
     const statusDot = paused
       ? `<span title="${stops} stop losses this week — entries paused"
            style="display:inline-flex;align-items:center;gap:3px;
-                  background:#450a0a;color:#EF4444;font-size:10px;
+                  background:#3a1a1a;color:#f85149;font-size:10px;
                   padding:1px 5px;border-radius:3px;margin-left:4px;">
            🔴 paused</span>`
       : `<span title="${stops} stop losses this week — entries open"
            style="display:inline-flex;align-items:center;gap:3px;
-                  color:#10B981;font-size:10px;margin-left:4px;">●</span>`;
+                  color:#3fb950;font-size:10px;margin-left:4px;">●</span>`;
     return `<div class="sector-bar">
       <span class="sector-name" style="width:110px">${sectorLabel}${statusDot}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
@@ -673,7 +673,7 @@ async function loadData() {
   const maxTicker = Math.max(...tickers.map(t => t.count), 1);
   document.getElementById('tickerBars').innerHTML = tickers.map(t => {
     const w = Math.round(t.count / maxTicker * 100);
-    const col = t.bias === 'bullish' ? '#10B981' : t.bias === 'bearish' ? '#EF4444' : '#8b949e';
+    const col = t.bias === 'bullish' ? '#3fb950' : t.bias === 'bearish' ? '#f85149' : '#8b949e';
     return `<div class="sector-bar">
       <span class="sector-name" style="font-weight:600">${t.ticker}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
@@ -690,7 +690,7 @@ async function loadData() {
       labels: ['Bullish', 'Bearish', 'Neutral'],
       datasets: [{
         data: [sent.bullish||0, sent.bearish||0, sent.neutral||0],
-        backgroundColor: ['#10B981', '#EF4444', '#1f2937'],
+        backgroundColor: ['#3fb950', '#f85149', '#30363d'],
         borderWidth: 0
       }]
     },
@@ -708,8 +708,8 @@ async function loadData() {
   // VIX display in sentiment card
   const vixDisplay = document.getElementById('vixDisplay');
   if (vixDisplay && vix.vix) {
-    const vixColor = vix.action === 'pause' ? '#EF4444' : 
-                     vix.action === 'reduce' ? '#e3b341' : '#10B981';
+    const vixColor = vix.action === 'pause' ? '#f85149' : 
+                     vix.action === 'reduce' ? '#e3b341' : '#3fb950';
     vixDisplay.innerHTML = `<span style="color:${vixColor};font-weight:600">VIX ${vix.vix.toFixed(1)}</span> <span style="color:#8b949e;font-size:11px">— ${vix.reason.split('—')[1]?.trim() || vix.action}</span>`;
   }
 
