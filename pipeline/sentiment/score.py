@@ -70,7 +70,8 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "other"
+  ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
 - macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
@@ -92,7 +93,8 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "other"
+  ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
 - macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran

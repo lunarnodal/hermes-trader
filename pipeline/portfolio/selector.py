@@ -373,7 +373,7 @@ def generate_recommendations(predictions: list[dict],
         sector = "macro"
         sector_keywords = {
             "energy":      ["energy", "oil", "gas", "utilities", "renewables"],
-            "technology":  ["technology", "ai", "semiconductor", "data center"],
+            "technology":  ["technology", "ai", "semiconductor", "data center", "gpu", "hyperscaler", "ai infrastructure", "data centre"],
             "financials":  ["financial", "bank", "rates", "real estate"],
             "healthcare":  ["healthcare", "biotech", "pharma"],
             "defense":     ["defense", "aerospace", "defense"],
