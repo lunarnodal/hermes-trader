@@ -25,6 +25,16 @@ from portfolio.db import (
 from portfolio.selector import (
     get_recent_signals, generate_recommendations, fetch_current_price
 )
+from portfolio.explain import (
+    init_explainability_db, explain_position_open, explain_position_close
+)
+
+# Initialize explainability table on module load
+try:
+    _db_path = str(Path(__file__).parent.parent / data / paper_trading.db)
+    init_explainability_db(_db_path)
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
