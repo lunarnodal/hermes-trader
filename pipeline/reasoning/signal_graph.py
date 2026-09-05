@@ -130,7 +130,7 @@ STATIC_DEPENDENCIES = {
         ("materials",   "bullish", "shortage raises input prices"),
     ],
     "helium_shortage": [
-        ("healthcare",  "bearish", "helium shortage disrupts MRI and medical device manufacturing"),
+        ("healthcare_equipment",  "bearish", "helium shortage disrupts MRI and medical device manufacturing"),
     ],
     "iran": [
         ("energy",      "bullish", "Strait of Hormuz supply disruption risk"),
@@ -236,15 +236,53 @@ def get_learned_dependencies(conn: sqlite3.Connection) -> dict:
     return deps
 
 
+
+def _make_derived_signal(signal: dict, trigger: str, affected_sector: str,
+                          direction_mult, relationship: str,
+                          processed_pairs: set):
+    """Helper: build one derived signal, with dedup check."""
+    sentiment    = signal.get('sentiment', 'neutral')
+    confidence   = signal.get('confidence', 0.65)
+    dep_confidence = 0.70
+
+    if isinstance(direction_mult, str):
+        derived_sentiment = direction_mult
+    elif direction_mult > 0:
+        derived_sentiment = sentiment
+    else:
+        derived_sentiment = "bearish"
+
+    derived_confidence = round(confidence * dep_confidence, 2)
+
+    pair_key = (trigger, affected_sector, derived_sentiment)
+    if pair_key in processed_pairs:
+        return None
+    processed_pairs.add(pair_key)
+
+    return {
+        'title':        "[INDIRECT] " + trigger + " -> " + affected_sector + ": " + relationship[:60],
+        'sentiment':    derived_sentiment,
+        'confidence':   derived_confidence,
+        'sectors':      [affected_sector],
+        'tickers':      [],
+        'source':       'signal_graph',
+        'derived_from': signal.get('title', '')[:60],
+        'trigger':      trigger,
+    }
+
+
 def find_triggered_dependencies(signals: list[dict]) -> list[dict]:
     """
     Scan signals for dependency triggers and return derived signals.
-    
+
     For each signal, check if its title/sectors match any known dependencies.
     If so, create a derived signal for the downstream sector.
+    Supports keyword-based enrichment: signals with event_type=supply_disruption
+    or commodity_shortage that contain 'helium' in title/summary trigger the
+    helium_shortage -> healthcare_equipment dependency.
     """
     derived = []
-    
+
     try:
         lessons_conn = sqlite3.connect(LESSONS_DB)
         learned_deps = get_learned_dependencies(lessons_conn)
@@ -267,19 +305,42 @@ def find_triggered_dependencies(signals: list[dict]) -> list[dict]:
     processed_pairs = set()  # avoid duplicate derived signals
 
     for signal in signals:
-        title   = signal.get('title', '').lower()
-        sectors = [s.lower() for s in signal.get('sectors', [])]
-        tickers = [t.lower() for t in signal.get('tickers', [])]
-        sentiment = signal.get('sentiment', 'neutral')
+        title      = signal.get('title', '').lower()
+        summary    = signal.get('summary', '').lower()
+        sectors    = [s.lower() for s in signal.get('sectors', [])]
+        tickers    = [t.lower() for t in signal.get('tickers', [])]
+        sentiment  = signal.get('sentiment', 'neutral')
         confidence = signal.get('confidence', 0.65)
+        event_type = signal.get('event_type', '').lower()
+        macro_themes = [t.lower() for t in signal.get('macro_themes', [])]
 
-        # Check each trigger
+        # -- Keyword-based enrichment ------------------------------------
+        # Signals with event_type supply_disruption/commodity_shortage
+        # mentioning "helium" in title/summary fire helium_shortage dep
+        if event_type in ("supply_disruption", "commodity_shortage") and "helium" in (title + " " + summary):
+            helium_downstream = all_deps.get("helium_shortage", [])
+            for downstream in helium_downstream:
+                if isinstance(downstream, tuple):
+                    affected_sector, direction_mult, relationship = downstream
+                else:
+                    affected_sector = downstream['to']
+                    direction_mult  = 1.0
+                    relationship    = downstream.get('relationship', '')
+                result = _make_derived_signal(
+                    signal, "helium_shortage", affected_sector,
+                    direction_mult, relationship, processed_pairs)
+                if result:
+                    derived.append(result)
+                    log.debug("Keyword helium: helium_shortage -> " + affected_sector)
+
+        # -- Standard trigger matching ------------------------------------
         for trigger, downstream_list in all_deps.items():
+            # Skip helium_shortage here -- already handled via keyword above
+            if trigger == "helium_shortage":
+                continue
+
             trigger_lower = trigger.lower()
 
-            # Does this signal match the trigger?
-            # Check macro_themes first (most reliable), then fall back to text
-            macro_themes = [t.lower() for t in signal.get('macro_themes', [])]
             matched = (
                 any(trigger_lower in theme for theme in macro_themes) or
                 trigger_lower in title or
@@ -293,52 +354,23 @@ def find_triggered_dependencies(signals: list[dict]) -> list[dict]:
             for downstream in downstream_list:
                 if isinstance(downstream, tuple):
                     affected_sector, direction_mult, relationship = downstream
-                    dep_confidence = 0.70
                 else:
                     affected_sector = downstream['to']
                     direction_mult  = 1.0
                     relationship    = downstream.get('relationship', '')
                     dep_confidence  = downstream.get('confidence', 0.70)
 
-                # Calculate derived sentiment based on economic relationship
-                # direction_mult > 0: sector benefits FROM this trigger event
-                #   e.g. rate hike (bearish macro) + financials(+1.0) = bullish financials
-                #   e.g. oil rise (bullish energy) + energy(+1.0) = bullish energy
-                # direction_mult < 0: sector is hurt BY this trigger event
-                #   e.g. oil rise (bullish energy) + airlines(-1.0) = bearish airlines
-                #   e.g. rate hike (bearish macro) + technology(-1.0) = bearish technology
-                if isinstance(direction_mult, str):
-                    derived_sentiment = direction_mult  # explicit: "bullish"/"bearish"
-                elif direction_mult > 0:
-                    derived_sentiment = sentiment  # same direction as trigger
-                else:
-                    derived_sentiment = "bearish"  # negative impact
-                # Reduce confidence for indirect signals
-                derived_confidence = round(confidence * dep_confidence, 2)
-
-                # Dedup
-                pair_key = (trigger, affected_sector, derived_sentiment)
-                if pair_key in processed_pairs:
-                    continue
-                processed_pairs.add(pair_key)
-
-                derived_signal = {
-                    'title':      f"[INDIRECT] {trigger} → {affected_sector}: {relationship[:60]}",
-                    'sentiment':  derived_sentiment,
-                    'confidence': derived_confidence,
-                    'sectors':    [affected_sector],
-                    'tickers':    [],
-                    'source':     'signal_graph',
-                    'derived_from': signal.get('title', '')[:60],
-                    'trigger':    trigger,
-                }
-                derived.append(derived_signal)
-                log.debug(f"Derived: {trigger} → {affected_sector} "
-                         f"({derived_sentiment} {derived_confidence:.2f})")
+                result = _make_derived_signal(
+                    signal, trigger, affected_sector,
+                    direction_mult, relationship, processed_pairs)
+                if result:
+                    derived.append(result)
+                    log.debug("Derived: " + trigger + " -> " + affected_sector +
+                             " (" + result['sentiment'] + " " + str(result['confidence']) + ")")
 
     if derived:
-        log.info(f"Signal graph: {len(derived)} derived signals from "
-                 f"{len(signals)} input signals")
+        log.info("Signal graph: " + str(len(derived)) + " derived signals from " +
+                 str(len(signals)) + " input signals")
 
     return derived
 
@@ -376,10 +408,11 @@ def enrich_signals(signals: list[dict],
         derived = [d for d in derived if matches_sector(d, target_sector)]
 
     if derived:
-        log.info(f"Enriched signals: {len(signals)} original + "
-                 f"{len(derived)} derived = {len(signals)+len(derived)} total")
+        log.info("Enriched signals: " + str(len(signals)) + " original + " +
+                 str(len(derived)) + " derived = " + str(len(signals)+len(derived)) + " total")
 
     return signals + derived
+
 
 
 def get_dependency_summary() -> str:
