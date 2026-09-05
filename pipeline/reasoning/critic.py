@@ -19,6 +19,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from .calibration import calculate_adjustment
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ RULES_DB   = Path("/home/trading/trading-ai/data/rules.db")
 MIN_WIN_RATE_FOR_HIGH_CONF = 0.45  # sector needs >45% win rate to support >80% confidence
 CONTRADICTION_PENALTY      = 0.10  # reduce confidence when contradictions found
 MAX_REDUCTIONS             = 0.25  # never reduce more than 25% total
+
+# Calibration gate — weak sectors cannot earn an 'approve' verdict
+WEAK_SECTOR_WIN_RATE_THRESHOLD  = 0.40  # win rate below this is "weak"
+WEAK_SECTOR_ADJ_THRESHOLD       = -0.10  # adjustment at or below this is "weak"
 
 
 def get_sector_win_rate(sector: str, window: int = 20) -> dict | None:
@@ -104,6 +109,63 @@ def get_relevant_lessons(sector: str) -> list[dict]:
         return []
 
 
+def _get_alltime_sector_stats(conn: sqlite3.Connection, sector: str) -> dict:
+    """
+    Query ALL-TIME verified predictions for a sector (no rolling window).
+    Returns {win_rate, total, correct}. Used by the calibration gate to detect
+    sectors that are historically weak even when a recent rolling window
+    looks better.
+    """
+    SECTOR_KW_MAP = {
+        'healthcare':    ['healthcare', 'biotech'],
+        'financials':    ['financial', 'bank'],
+        'industrials':   ['industrials', 'defense', 'aerospace'],
+        'technology':    ['technology', 'semiconductor', 'ai'],
+        'energy':        ['energy', 'oil', 'gas'],
+        'consumer':      ['consumer', 'retail'],
+        'materials':     ['materials', 'mining', 'metals'],
+        'market_overview': ['market outlook', 'macro', 's&p'],
+    }
+    keywords = SECTOR_KW_MAP.get(sector, [sector])
+    where_clauses = ' OR '.join(['query LIKE ?' for _ in keywords])
+    params = [f'%{kw}%' for kw in keywords]
+
+    rows = conn.execute(
+        f"SELECT was_correct FROM predictions WHERE was_correct IS NOT NULL AND ({where_clauses})",
+        params
+    ).fetchall()
+
+    total   = len(rows)
+    correct = sum(1 for r in rows if r[0] == 1)
+    if total == 0:
+        return {'win_rate': 0.50, 'total': 0, 'correct': 0}
+    return {'win_rate': correct / total, 'total': total, 'correct': correct}
+
+
+def get_calibration_adjustment(sector: str) -> tuple[float, float]:
+    """
+    Read the ALL-TIME calibration win rate and adjustment for a sector.
+    Uses the full history (not rolling window) so the calibration gate
+    catches sectors that are historically weak even if recent predictions
+    have been lucky.
+    Returns (win_rate, adjustment).
+    """
+    try:
+        PAPER_DB = Path("/home/trading/trading-ai/data/paper_trading.db")
+        conn = sqlite3.connect(PAPER_DB)
+        stats = _get_alltime_sector_stats(conn, sector)
+        conn.close()
+
+        if stats['total'] < 10:
+            return 0.50, 0.0  # insufficient history
+
+        wr = stats['win_rate']
+        adj = calculate_adjustment(wr, stats['total'])
+        return wr, adj
+    except Exception:
+        return 0.50, 0.0
+
+
 def get_indirect_dependencies(sector: str) -> list[dict]:
     """Check if any known dependencies should affect this sector"""
     try:
@@ -160,6 +222,22 @@ def critique_prediction(query: str,
             sector = s
             break
 
+    # ── Check 0: Calibration gate — block approve on weak sectors ────────────
+    # The calibration adjustment (-0.20) is applied post-prediction to trading
+    # confidence, but the critic should also gate 'approve' verdicts for sectors
+    # with poor historical win rates, regardless of signal quality.
+    cal_wr, cal_adj = get_calibration_adjustment(sector)
+    calibration_gate_fired = False
+    if (cal_wr < WEAK_SECTOR_WIN_RATE_THRESHOLD and
+            cal_adj <= WEAK_SECTOR_ADJ_THRESHOLD):
+        issues.append(
+            f"Calibration gate: {sector} win rate {cal_wr:.0%} "
+            f"and adjustment {cal_adj:+.2f} — 'approve' blocked; "
+            f"verdict capped at 'challenge'"
+        )
+        confidence_adjustment -= CONTRADICTION_PENALTY
+        calibration_gate_fired = True
+
     # ── Check 1: Sector calibration history ──────────────────────────────────
     win_rate_data = get_sector_win_rate(sector)
     if win_rate_data:
@@ -176,7 +254,8 @@ def critique_prediction(query: str,
                 f"{sector} has strong track record: {wr:.0%} win rate "
                 f"({win_rate_data['correct']}/{win_rate_data['total']})"
             )
-        elif wr < 0.40:
+        elif wr < 0.40 and not calibration_gate_fired:
+            # Don't double-penalize if the calibration gate already fired
             issues.append(
                 f"Weak sector: {sector} win rate {wr:.0%} — "
                 f"confidence should be tempered"
