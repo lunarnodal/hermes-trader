@@ -384,27 +384,148 @@ def generate_recommendations(predictions: list[dict],
         confidence = p.get("confidence", 0)
         query     = pred.get("query", "")
 
-        # Only act on bullish predictions with sufficient confidence
-        if direction != "bullish" or confidence < 0.70:
-            log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
-            _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
-                raw_conf=confidence, adj_conf=confidence,
-                gate="direction_confidence",
-                reason=f"direction={direction} conf={confidence:.2f} < 0.70"
+            continue
+
+                reason=f"critic verdict=reject"
             )
             continue
 
-        # Critic verdict gate — reject verdicts block recommendations
+        verdict = p.get("critic_verdict", "approve")
+        # Check for critic verdict - reject if verdict is 'reject'
         verdict = p.get("critic_verdict", "approve")
         if verdict == "reject":
             log.info(f"REJECT verdict for {query} -- blocking from recommendations")
             _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
+                sector=sector, query=query, direction=direction,
                 raw_conf=confidence, adj_conf=confidence,
                 gate="critic_verdict_reject",
-                reason="critic verdict=reject"
+                reason=f"critic verdict=reject"
             )
+            continue
+
+        if verdict == "reject":
+        # Check for critic verdict - reject if verdict is 'reject'
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+            continue
+        # Check for critic verdict - reject if verdict is 'reject'
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+
+        # Check for critic verdict - reject if verdict is 'reject'
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+                sector="unknown", query=query, direction=direction,
+        # Check for critic verdict - reject if verdict is 'reject'
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+        verdict = p.get("critic_verdict", "approve")
+        # Check for critic verdict - reject if verdict is 'reject'
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+                raw_conf=confidence, adj_conf=confidence,
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+                gate="direction_confidence",
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+                reason=f"direction={direction} conf={confidence:.2f} < 0.70"
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
+            )
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason=f"critic verdict=reject"
+            )
+            continue
+
             continue
 
         # Extract sector from query

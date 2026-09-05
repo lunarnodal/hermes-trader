@@ -395,18 +395,6 @@ def generate_recommendations(predictions: list[dict],
             )
             continue
 
-        # Critic verdict gate — reject verdicts block recommendations
-        verdict = p.get("critic_verdict", "approve")
-        if verdict == "reject":
-            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
-            _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
-                raw_conf=confidence, adj_conf=confidence,
-                gate="critic_verdict_reject",
-                reason="critic verdict=reject"
-            )
-            continue
-
         # Extract sector from query
         query_lower = query.lower()
         sector = "macro"
