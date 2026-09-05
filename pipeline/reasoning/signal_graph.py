@@ -129,6 +129,9 @@ STATIC_DEPENDENCIES = {
         ("industrials", "bearish", "manufacturing disruption"),
         ("materials",   "bullish", "shortage raises input prices"),
     ],
+    "helium_shortage": [
+        ("healthcare",  "bearish", "helium shortage disrupts MRI and medical device manufacturing"),
+    ],
     "iran": [
         ("energy",      "bullish", "Strait of Hormuz supply disruption risk"),
         ("defense",     "bullish", "Middle East conflict drives spending"),
