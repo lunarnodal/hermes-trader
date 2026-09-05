@@ -210,6 +210,61 @@ def is_entry_window() -> bool:
     return any(start <= now <= end for start, end in windows)
 
 
+
+def check_concentration_risk(conn, min_trades: int = 3, max_pct: float = 80.0) -> dict:
+    """
+    Reject new entries if >max_pct of cumulative closed-trade P&L comes from
+    <=min_trades tickers.
+
+    Edge cases that pass (no concentration possible yet):
+      - No closed trades at all
+      - total_closed_pnl <= 0  (all positions closed at a loss)
+      - Fewer than min_trades tickers with positive P&L
+    """
+    rows = conn.execute("""
+        SELECT ticker, SUM(pnl) AS ticker_pnl
+        FROM positions
+        WHERE status = 'closed' AND pnl IS NOT NULL
+        GROUP BY ticker
+        HAVING ticker_pnl > 0
+        ORDER BY ticker_pnl DESC
+    """).fetchall()
+
+    if not rows:
+        return {"approved": True, "reason": "no closed trades"}
+
+    tickers = [r[0] for r in rows]
+    if len(tickers) < min_trades:
+        return {"approved": True,
+                "reason": "only %d closed tickers (min=%d)" % (len(tickers), min_trades)}
+
+    total_closed_pnl = sum(r[1] for r in rows)
+    if total_closed_pnl <= 0:
+        return {"approved": True, "reason": "no profitable closed trades"}
+
+    dominating = []
+    for ticker, pnl in rows:
+        pct = (pnl / total_closed_pnl) * 100
+        if pct > max_pct:
+            dominating.append((ticker, pct))
+
+    # Only flag if the dominating tickers are within the top `min_trades`
+    top_n = rows[:min_trades]
+    top_n_tickers = {r[0] for r in top_n}
+    risky = [(t, p) for t, p in dominating if t in top_n_tickers]
+
+    if risky:
+        names = ", ".join("%s (%.0f%%)" % (t, p) for t, p in risky)
+        return {
+            "approved": False,
+            "reason": ">%.0f%% P&L from top %d tickers: %s" % (max_pct, len(risky), names)
+        }
+
+    return {"approved": True,
+            "reason": "top ticker=%.0f%% (limit=%.0f%%)" % (
+                rows[0][1] / total_closed_pnl * 100, max_pct)}
+
+
 def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
     """Check all open positions for stop loss / take profit triggers"""
     positions = get_open_positions(conn)
@@ -428,6 +483,15 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — sector {sector} at {current_sector_pct:.1f}% "
                      f"(max {CONFIG['max_sector_pct']*100:.0f}%)")
             continue
+
+        # Check concentration risk — reject if top tickers dominate closed P&L
+        conc = check_concentration_risk(conn,
+            min_trades=CONFIG.get("concentration_min_trades", 3),
+            max_pct=CONFIG.get("concentration_max_pct", 80.0)
+        )
+        if not conc["approved"]:
+            log.warning(f"CONCENTRATION RISK — blocking new entries: {conc['reason']}")
+            return [], None
 
         # Check cash reserve
         reserve = port_val * CONFIG["min_cash_reserve_pct"]

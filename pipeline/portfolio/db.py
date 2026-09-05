@@ -40,6 +40,8 @@ CONFIG = {
     "max_open_positions":   12,        # max 12 simultaneous open positions
     "drawdown_circuit_breaker_pct": 0.05,   # portfolio freeze only on catastrophic loss (5%+)
     "sector_breaker_stops": 2,              # pause sector after N stop losses in 7 days
+    "concentration_max_pct":     80.0,     # 80% — reject if >80% closed P&L from <=min_trades tickers
+    "concentration_min_trades":  3,        # max tickers allowed to dominate before gate triggers
     "macro_gate_enabled": True,             # block entries if market_overview is bearish
     "max_positions_per_sector": {
         "technology":   4,
