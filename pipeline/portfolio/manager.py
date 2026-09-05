@@ -53,6 +53,7 @@ try:
     from portfolio.market_calendar import is_trading_day, get_holiday_name
     from portfolio.earnings_calendar import has_earnings_risk
     from portfolio.vix_gate import get_vix_gate
+    from portfolio.hard_gates import gate_all
 except ImportError:
     from market_calendar import is_trading_day, get_holiday_name
     from earnings_calendar import has_earnings_risk
@@ -503,6 +504,13 @@ def execute_recommendations(conn, recommendations: list[dict],
         # Check entry window
         if not is_entry_window() and not dry_run:
             log.info(f"SKIP {ticker} — outside entry window")
+            continue
+
+        # HARD GATES — deterministic layer, cannot be overridden by LLM
+        # Runs after critic verdict and all other soft gates
+        approved, gate_reason = gate_all(conn, ticker, value, action="BUY")
+        if not approved:
+            log.warning(f"HARD GATE rejected {ticker}: {gate_reason}")
             continue
 
         if shares <= 0 or price <= 0:
