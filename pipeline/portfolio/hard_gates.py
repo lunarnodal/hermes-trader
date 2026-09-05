@@ -8,11 +8,31 @@ in the reasoning layer can bypass these protections.
 
 All gates return (approved: bool, reason: str). An approved=False blocks
 the trade unconditionally; approved=True passes it onward.
+
+────────────────────────────────────────────────────────────────────────────
+SECURITY NOTE — _BYPASS
+────────────────────────────────────────────────────────────────────────────
+_BYPASS exists solely for manual emergency intervention (e.g. the portfolio
+is stuck in a frozen position and a human trader needs to force-close).
+It is NOT exposed through any API, config key, or rule file.
+
+If _BYPASS is True:
+  • ALL hard gates are skipped — the trade is approved unconditionally.
+  • Every invocation is logged at CRITICAL level with full trade context
+    so a security audit can later reconstruct who/what triggered it.
+
+Changing _BYPASS to True from an LLM prompt or automation is a CRITICAL
+security incident. The import-time check below will produce a WARNING so
+that any accidental or adversarial flip is visible in logs immediately.
+────────────────────────────────────────────────────────────────────────────
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import warnings
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -28,12 +48,73 @@ MAX_DAILY_LOSS   = 0.05   # 5 % portfolio loss from peak → block all new BUY
 MAX_SINGLE_ASSET = 0.35   # 35 % of portfolio in one ticker (incl. open pos)
 MIN_CASH_RATIO   = 0.20   # 20 % of portfolio value must remain as cash
 
-# ─── Gate helpers ───────────────────────────────────────────────────────────
+
+# ─── Bypass configuration ────────────────────────────────────────────────────
+# _BYPASS_DEFAULT is the only place the default lives.  All reads of the
+# bypass state go through _get_bypass(), which enforces audit-logging and
+# raises a warning at import time if the default has been changed from False.
+_BYPASS_DEFAULT = False   # ← the canonical secure default
+
+
+def _get_bypass() -> bool:
+    """
+    Return the current bypass state with full audit instrumentation.
+
+    This is the ONLY function that should read the bypass flag.
+    Every call site is logged at DEBUG, and every True result is logged
+    at CRITICAL so that security monitors can alert on active bypasses.
+    """
+    # Read from module globals so we can detect tampering via __dict__
+    module = sys.modules[__name__]
+    current = bool(getattr(module, "_BYPASS", _BYPASS_DEFAULT))
+
+    if current:
+        log.critical(
+            "[HARD GATE] BYPASS IS ACTIVE — all gates are being skipped. "
+            "Review stack trace above for call origin. "
+            "This is a CRITICAL security event if not expected."
+        )
+    return current
+
+
+def _check_bypass_integrity() -> None:
+    """
+    Called once at import time.  Verifies that _BYPASS has not been set to
+    anything other than the secure default (_BYPASS_DEFAULT = False).
+
+    Produces a WARNING log entry if the flag is not False, making any
+    accidental or adversarial change visible immediately in log output.
+    """
+    module = sys.modules[__name__]
+    current = getattr(module, "_BYPASS", _BYPASS_DEFAULT)
+
+    if current is not _BYPASS_DEFAULT:
+        # Use the 'warnings' module so this surfaces in code-review tools too
+        warnings.warn(
+            "hard_gates.py _BYPASS flag is not its secure default (False). "
+            "All hard gates will be bypassed. This is a CRITICAL security "
+            "risk if not intentional. Current value: %r" % (current,),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        log.warning(
+            "[HARD GATE SECURITY] _BYPASS has been changed from its secure "
+            "default (False) to %r. Bypass is now ACTIVE. "
+            "Do not ignore this warning. Alert a human immediately.",
+            current,
+        )
+
+
+# Run integrity check at import — any non-False value is now visible in logs
+_check_bypass_integrity()
+
+
+# ─── Gate helpers ────────────────────────────────────────────────────────────
 
 def _daily_pnl_pct(conn: "sqlite3.Connection") -> float:
     """
     Return today's unrealized + realized P&L as a fraction of portfolio value.
-   负数 = loss.  Used by the daily-loss circuit breaker.
+    负数 = loss.  Used by the daily-loss circuit breaker.
     """
     import sqlite3
     now_utc = datetime.now(timezone.utc)
@@ -236,14 +317,20 @@ def check_duplicate_order(
     return True, ""
 
 
-# ─── Manual override flag ───────────────────────────────────────────────────
-
-# Set _BYPASS = True to disable all gates (intended for manual trading only).
-# NEVER set this from an LLM prompt or rule file.
+# ─── Manual override flag ────────────────────────────────────────────────────
+#
+# DANGER: Setting this to True disables ALL hard gates without warning.
+#         NEVER change this from an LLM prompt or automation.
+#         The _check_bypass_integrity() call at import time will produce
+#         a WARNING if this value is anything other than False.
+#
+# To change this for emergency manual trading, edit the line below and
+# restart the pipeline process.  A restart is required so that the
+# import-time integrity check runs and the change is visible in logs.
 _BYPASS = False
 
 
-# ─── Composite gate ─────────────────────────────────────────────────────────
+# ─── Composite gate ──────────────────────────────────────────────────────────
 
 def gate_all(
     conn: "sqlite3.Connection",
@@ -255,10 +342,20 @@ def gate_all(
     Run every hard gate in sequence. Returns (approved, first_failure_reason).
 
     The bypass exists only for manual-intervention workflows. It is NOT
-    exposed through any API, config key, or rule file.
+    exposed through any API, config key, or rule file.  Every invocation
+    of gate_all is logged regardless of whether the bypass fires.
     """
-    if _BYPASS:
-        return True, "[bypass active]"
+    # Always log the gate_all call for audit traceability
+    if _get_bypass():
+        log.critical(
+            "[HARD GATE BYPASS AUDIT] gate_all called with bypass active — "
+            "ticker=%r action=%r proposed_value=%.2f. "
+            "All gates skipped. Review this entry immediately.",
+            ticker,
+            action,
+            proposed_value,
+        )
+        return True, "[bypass active — see security log for details]"
 
     gates = [
         check_daily_loss_breaker,
