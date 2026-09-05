@@ -13,7 +13,114 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 import sys
-sys.path.insert(0, str(Path(__file__Power grid, electricity demand, energy infrastructure attacks → always add "utilities", "energy", "ai_infrastructure", "data_center"
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from tickers.extract import extract_tickers, init_ticker_db, seed_common_tickers
+from tickers.taxonomy import normalize_sectors
+from events.meetings import is_meeting_signal, extract_meeting_date, record_meeting, init_db as init_events_db, is_in_risk_window
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from rules.rule_engine import init_db, seed_static_rules, build_prompt_rules
+
+# ─── Config ───────────────────────────────────────────────────────────────────
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+LLAMA_URL      = os.getenv("LLAMA_SCORE_URL", "http://localhost:8080/v1/chat/completions")
+LLAMA_MODEL    = os.getenv("LLAMA_SCORE_MODEL", "qwen3")
+TIMESERIES_DIR = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
+DB_PATH        = Path("/mnt/qnap/timeseries/ingestion.db")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("/mnt/qnap/timeseries/logs/score.log"),
+        logging.StreamHandler()
+    ]
+)
+log = logging.getLogger(__name__)
+
+# ─── Prompt ───────────────────────────────────────────────────────────────────
+
+def get_system_prompt() -> str:
+    """Build system prompt with dynamic inference rules from DB"""
+    conn = init_db()
+    seed_static_rules(conn)
+    rules_text = build_prompt_rules(conn)
+    conn.close()
+
+    # Load macro themes dynamically from taxonomy file
+    try:
+        _taxonomy_path = Path(__file__).parent.parent / "data" / "theme_taxonomy.json"
+        _taxonomy = json.loads(_taxonomy_path.read_text())
+        _theme_list = []
+        for _cat, _themes in _taxonomy.items():
+            if _cat != 'discovered':
+                _theme_list.extend(_themes[:8])
+        _theme_sample = ', '.join(_theme_list[:80])
+    except Exception:
+        _theme_sample = 'interest_rate_increase, oil_price_increase, earnings_beat, geopolitical_tension, ipo_listing'
+
+    return f"""You are a financial news sentiment analyst.
+Analyze the headline and summary provided and return ONLY a JSON object.
+No explanation, no markdown, no preamble. Only the JSON object.
+
+Required fields:
+- sentiment: exactly one of "bullish", "bearish", "neutral"
+- confidence: float between 0.0 and 1.0
+- tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
+- sectors: array of ALL affected sectors including INDIRECT impacts
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "commodity_shortage", "supply_disruption", "other"
+  ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
+  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
+- macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
+- summary: max 2 sentence plain English summary of market impact
+
+{rules_text}
+
+Example output:
+{{"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","macro_themes":["earnings_miss"],"summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}}
+"""
+
+
+SYSTEM_PROMPT = """You are a financial news sentiment analyst.
+Analyze the headline and summary provided and return ONLY a JSON object.
+No explanation, no markdown, no preamble. Only the JSON object.
+
+Required fields:
+- sentiment: exactly one of "bullish", "bearish", "neutral"
+- confidence: float between 0.0 and 1.0
+- tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
+- sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "commodity_shortage", "supply_disruption", "other"
+  ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
+  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
+- macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
+- summary: max 2 sentence plain English summary of market impact
+
+SECTOR INFERENCE RULES — always apply these cross-sector inferences:
+- War, conflict, military strikes, sanctions → always add "energy", "defense", "commodities"
+- Russia, Ukraine, Middle East conflict → always add "energy", "oil_gas", "commodities"
+- Iran, Saudi Arabia, OPEC news → always add "energy", "oil_gas"
+- Federal Reserve, interest rates, inflation → always add "financials", "real_estate", "utilities"
+- China trade, tariffs, export controls → always add "semiconductors", "technology", "manufacturing"
+- Supply chain disruption → always add "manufacturing", "technology", "retail"
+- Drought, floods, weather events → always add "agriculture", "insurance", "utilities"
+- Cybersecurity attacks → always add "technology", "cybersecurity", "financials"
+- Food prices, crop reports → always add "agriculture", "consumer_staples"
+- Dollar strength/weakness → always add "commodities", "emerging_markets", "exporters"
+- AI infrastructure, data center, GPU demand → always add "semiconductors", "ai_infrastructure", "data_center", "utilities"
+- Memory shortage, HBM, DRAM supply → always add "memory", "semiconductors", "ai_infrastructure"
+- Ukraine conflict specifically → always add "energy", "oil_gas", "neon_gas", "semiconductors", "chemicals"
+- Russia sanctions, Russian exports → always add "energy", "oil_gas", "commodities", "chemicals", "semiconductors"
+- China export controls, gallium, germanium → always add "semiconductors", "materials", "ai_infrastructure"
+- Taiwan, TSMC, strait tensions → always add "semiconductors", "ai_infrastructure", "technology"
+- Data center construction, hyperscaler capex → always add "utilities", "real_estate", "construction", "ai_infrastructure"
+- Specialty gases, neon, argon, krypton → always add "semiconductors", "chemicals", "manufacturing"
+- Helium shortage, helium supply disruption, helium supply constraints, medical helium → always add "healthcare_equipment", "semiconductors", "chemicals", "manufacturing"; event_type must be "commodity_shortage" or "supply_disruption"
+- Power grid, electricity demand, energy infrastructure attacks → always add "utilities", "energy", "ai_infrastructure", "data_center"
 
 Example output:
 {"sentiment":"bearish","confidence":0.82,"tickers":["TSLA"],"sectors":["automotive","ev"],"event_type":"earnings","macro_themes":["earnings_miss"],"summary":"Tesla missed Q2 earnings estimates significantly. Analyst downgrades expected."}
