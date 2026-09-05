@@ -36,6 +36,13 @@ MAX_REDUCTIONS             = 0.25  # never reduce more than 25% total
 WEAK_SECTOR_WIN_RATE_THRESHOLD  = 0.40  # win rate below this is "weak"
 WEAK_SECTOR_ADJ_THRESHOLD       = -0.10  # adjustment at or below this is "weak"
 
+WEAK_SECTOR_ADJ_THRESHOLD       = -0.10  # adjustment at or below this is "weak"
+
+# ---- TTL cache for _get_alltime_sector_stats (avoids redundant hits) ----
+_ALLTIME_CACHE: dict[str, tuple[float, tuple]] = {}   # key → (expires_at, stats_tuple)
+_ALLTIME_CACHE_TTL_SECONDS  = 300                     # 5-minute TTL
+_ALLTIME_LOOKBACK_MONTHS    = 12                     # date-bounds safety cap
+
 
 def get_sector_win_rate(sector: str, window: int = 20) -> dict | None:
     """Get rolling win rate for a sector from predictions DB"""
@@ -111,8 +118,15 @@ def get_relevant_lessons(sector: str) -> list[dict]:
 
 def _get_alltime_sector_stats(conn: sqlite3.Connection, sector: str) -> dict:
     """
-    Query ALL-TIME verified predictions for a sector (no rolling window).
-    Returns {win_rate, total, correct}. Used by the calibration gate to detect
+    Query verified predictions for a sector with two layers of protection
+    against unbounded scans:
+
+    1. TTL cache  — results are cached for _ALLTIME_CACHE_TTL_SECONDS so the DB
+       is hit at most once per calibration cycle within a trading session.
+    2. Date bound — a 12-month rolling window is applied so old data does not
+       inflate or suppress the calibration adjustment indefinitely.
+
+    Returns {win_rate, total, correct}.  Used by the calibration gate to detect
     sectors that are historically weak even when a recent rolling window
     looks better.
     """
@@ -130,16 +144,49 @@ def _get_alltime_sector_stats(conn: sqlite3.Connection, sector: str) -> dict:
     where_clauses = ' OR '.join(['query LIKE ?' for _ in keywords])
     params = [f'%{kw}%' for kw in keywords]
 
-    rows = conn.execute(
-        f"SELECT was_correct FROM predictions WHERE was_correct IS NOT NULL AND ({where_clauses})",
-        params
-    ).fetchall()
+    # ---- Date-bound safety cap (12-month rolling window) ----
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+    date_clause = " AND created_at >= ?"
+    params.append(cutoff)
 
-    total   = len(rows)
-    correct = sum(1 for r in rows if r[0] == 1)
+    # ---- Single-pass SQL aggregation — O(1) memory vs O(n) fetchall ----
+    full_where = f"was_correct IS NOT NULL AND ({where_clauses}){date_clause}"
+    row = conn.execute(
+        f"SELECT COUNT(*), SUM(was_correct) FROM predictions WHERE {full_where}",
+        params
+    ).fetchone()
+
+    total   = row[0] or 0
+    correct = row[1] or 0   # SUM returns NULL when no rows match
     if total == 0:
         return {'win_rate': 0.50, 'total': 0, 'correct': 0}
     return {'win_rate': correct / total, 'total': total, 'correct': correct}
+
+
+def _get_alltime_sector_stats_with_cache(sector: str) -> dict:
+    """
+    Cached wrapper around _get_alltime_sector_stats.
+
+    Hits the DB at most once per cache TTL per sector.  Subsequent calls within
+    the TTL window return the cached result immediately.
+    """
+    import time
+    now = time.monotonic()
+    key = sector
+
+    cached = _ALLTIME_CACHE.get(key)
+    if cached is not None:
+        expires_at, stats = cached
+        if now < expires_at:
+            return stats
+
+    PAPER_DB = Path("/home/trading/trading-ai/data/paper_trading.db")
+    conn = sqlite3.connect(PAPER_DB)
+    stats = _get_alltime_sector_stats(conn, sector)
+    conn.close()
+
+    _ALLTIME_CACHE[key] = (now + _ALLTIME_CACHE_TTL_SECONDS, stats)
+    return stats
 
 
 def get_calibration_adjustment(sector: str) -> tuple[float, float]:
@@ -151,10 +198,7 @@ def get_calibration_adjustment(sector: str) -> tuple[float, float]:
     Returns (win_rate, adjustment).
     """
     try:
-        PAPER_DB = Path("/home/trading/trading-ai/data/paper_trading.db")
-        conn = sqlite3.connect(PAPER_DB)
-        stats = _get_alltime_sector_stats(conn, sector)
-        conn.close()
+        stats = _get_alltime_sector_stats_with_cache(sector)
 
         if stats['total'] < 10:
             return 0.50, 0.0  # insufficient history
