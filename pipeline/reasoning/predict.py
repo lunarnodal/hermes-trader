@@ -491,36 +491,85 @@ def save_prediction(result: dict) -> Path:
 
 
 
-def compute_theta_eligibility_score(ticker: str,
-                                     sector: str,
-                                     sector_win_rate: float,
-                                     sector_momentum: float,
-                                     iv_rank: float = 50.0,
-                                     dte: int = 30) -> float:
+def compute_theta_eligibility_score(sector: str, market_data: dict) -> tuple[float, dict]:
     """
-    Composite theta eligibility score 0-1 for a ticker in a given sector.
+    Composite theta eligibility score 0.0-1.0 for a sector.
+
     Score >= THETA_CONFIG["theta_eligibility_threshold"] (default 0.65)
     unlocks theta-gang mode (covered-call / cash-secured-put).
-    Components
-    ----------
-    sector_win_rate  : sector's realized win rate [0, 1]
-    sector_momentum  : 30-day return of sector ETF [fraction]
-    iv_rank          : current IV rank [0, 100]; >60 = rich premium
-    dte              : days to expiry for the candidate option
+
+    Args:
+        sector: Sector name (e.g. "energy", "technology")
+        market_data: Dict with keys:
+            - iv_rank: float [0, 100]; higher = more expensive premiums
+            - premium_yield: float annualized premium as fraction (e.g. 0.02 = 2%)
+            - market_regime: str one of "sideways", "trending_bull", "trending_bear", "volatile"
+            - assignment_history: dict mapping sector -> {total, assigned, rate}
+            - liquidity: dict with open_interest and volume (both absolute counts)
+
+    Returns:
+        (score, breakdown) where score is float [0.0, 1.0] and breakdown is a dict
+        of sub-component values for debugging/logging, plus an "eligible" boolean.
     """
-    score = sector_win_rate * 0.30
-    score += max(0, sector_momentum) * 0.20
-    score += (iv_rank / 100.0) * 0.25
-    if 21 <= dte <= 45:
-        dte_score = 1.0
-    elif 14 <= dte < 21:
-        dte_score = 0.70
-    elif 45 < dte <= 60:
-        dte_score = 0.75
-    else:
-        dte_score = 0.25
-    score += dte_score * 0.25
-    return round(min(score, 1.0), 3)
+    iv_rank = max(0.0, min(100.0, float(market_data.get("iv_rank", 50.0))))
+    premium_yield = max(0.0, float(market_data.get("premium_yield", 0.0)))
+    market_regime = market_data.get("market_regime", "sideways")
+    assignment_history = market_data.get("assignment_history", {})
+    liquidity = market_data.get("liquidity", {})
+
+    # --- Component 1: IV Rank (weight 0.30) ---
+    iv_score = iv_rank / 100.0
+    iv_component = iv_score * 0.30
+
+    # --- Component 2: Premium Yield (weight 0.30) ---
+    yield_cap = 0.05
+    yield_score = min(premium_yield / yield_cap, 1.0)
+    yield_component = yield_score * 0.30
+
+    # --- Component 3: Market Regime (weight 0.15) ---
+    regime_scores = {
+        "sideways": 1.0,
+        "volatile": 0.6,
+        "trending_bull": 0.3,
+        "trending_bear": 0.3,
+    }
+    regime_score = regime_scores.get(market_regime, 0.5)
+    regime_component = regime_score * 0.15
+
+    # --- Component 4: Assignment History Penalty (weight 0.15) ---
+    sector_history = assignment_history.get(sector, {"rate": 0.0})
+    assignment_rate = sector_history.get("rate", 0.0)
+    assignment_penalty = min(assignment_rate / 0.50, 1.0)
+    assignment_component = 0.15 * (1.0 - assignment_penalty)
+
+    # --- Component 5: Liquidity (weight 0.10) ---
+    oi = liquidity.get("open_interest", 0)
+    vol = liquidity.get("volume", 0)
+    oi_score = min(oi / 500.0, 1.0) if oi else 0.0
+    vol_score = min(vol / 100.0, 1.0) if vol else 0.0
+    liq_score = (oi_score + vol_score) / 2.0
+    liq_component = liq_score * 0.10
+
+    # --- Composite score, bounded [0.0, 1.0] ---
+    raw_score = iv_component + yield_component + regime_component + assignment_component + liq_component
+    score = round(max(0.0, min(1.0, raw_score)), 3)
+
+    breakdown = {
+        "iv_rank": iv_rank,
+        "iv_component": round(iv_component, 4),
+        "premium_yield": round(premium_yield, 4),
+        "yield_component": round(yield_component, 4),
+        "market_regime": market_regime,
+        "regime_component": round(regime_component, 4),
+        "assignment_rate": round(assignment_rate, 4),
+        "assignment_component": round(assignment_component, 4),
+        "open_interest": oi,
+        "volume": vol,
+        "liquidity_component": round(liq_component, 4),
+        "eligible": score >= 0.65,
+    }
+
+    return score, breakdown
 
 
 if __name__ == "__main__":

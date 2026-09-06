@@ -576,18 +576,35 @@ def generate_recommendations(predictions: list[dict],
                         continue
 
             # ── Theta-gang eligibility gate ──────────────────────────────────
-            from .db import THETA_CONFIG, compute_theta_eligibility_score as _theta_score
-            theta_score = _theta_score(
-                ticker, sector,
-                sector_win_rate=stats["win_rate"],
-                sector_momentum=stats.get("momentum_30d", 0.0),
-                iv_rank=50.0, dte=30
-            )
+            from .db import THETA_CONFIG
+            from pipeline.reasoning.predict import compute_theta_eligibility_score as _theta_score
+
+            assignment_history_raw = {}
+            if stats.get("sector_assignment_rate") is not None:
+                assignment_history_raw[sector] = {"rate": stats["sector_assignment_rate"]}
+
+            market_data = {
+                "iv_rank": stats.get("iv_rank", 50.0),
+                "premium_yield": stats.get("premium_yield", 0.0),
+                "market_regime": stats.get("market_regime", "sideways"),
+                "assignment_history": assignment_history_raw,
+                "liquidity": {
+                    "open_interest": stats.get("open_interest", 0),
+                    "volume": stats.get("option_volume", 0),
+                },
+            }
+
+            theta_score, theta_breakdown = _theta_score(sector, market_data)
             if theta_score < THETA_CONFIG["theta_eligibility_threshold"]:
                 log.debug(f"[THETA] {ticker} theta_score={theta_score:.3f} "
                           f"< {THETA_CONFIG['theta_eligibility_threshold']} — skipped")
             else:
-                log.info(f"[THETA] {ticker} theta_score={theta_score:.3f} — ELIGIBLE")
+                log.info(f"[THETA] {ticker} theta_score={theta_score:.3f} — ELIGIBLE "
+                         f"(iv={theta_breakdown['iv_component']:.3f} "
+                         f"yld={theta_breakdown['yield_component']:.3f} "
+                         f"regime={theta_breakdown['regime_component']:.3f} "
+                         f"assign={theta_breakdown['assignment_component']:.3f} "
+                         f"liq={theta_breakdown['liquidity_component']:.3f})")
 
             # Calculate position size
             sizing = calculate_position_size(
