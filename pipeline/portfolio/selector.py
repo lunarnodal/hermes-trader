@@ -575,6 +575,20 @@ def generate_recommendations(predictions: list[dict],
                                  f"(have {stock['avg_conf']:.0%})")
                         continue
 
+            # ── Theta-gang eligibility gate ──────────────────────────────────
+            from .db import THETA_CONFIG, compute_theta_eligibility_score as _theta_score
+            theta_score = _theta_score(
+                ticker, sector,
+                sector_win_rate=stats["win_rate"],
+                sector_momentum=stats.get("momentum_30d", 0.0),
+                iv_rank=50.0, dte=30
+            )
+            if theta_score < THETA_CONFIG["theta_eligibility_threshold"]:
+                log.debug(f"[THETA] {ticker} theta_score={theta_score:.3f} "
+                          f"< {THETA_CONFIG['theta_eligibility_threshold']} — skipped")
+            else:
+                log.info(f"[THETA] {ticker} theta_score={theta_score:.3f} — ELIGIBLE")
+
             # Calculate position size
             sizing = calculate_position_size(
                 confidence, stock["current_price"],

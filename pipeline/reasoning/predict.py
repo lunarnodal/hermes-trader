@@ -489,6 +489,40 @@ def save_prediction(result: dict) -> Path:
     return out
 
 
+
+
+def compute_theta_eligibility_score(ticker: str,
+                                     sector: str,
+                                     sector_win_rate: float,
+                                     sector_momentum: float,
+                                     iv_rank: float = 50.0,
+                                     dte: int = 30) -> float:
+    """
+    Composite theta eligibility score 0-1 for a ticker in a given sector.
+    Score >= THETA_CONFIG["theta_eligibility_threshold"] (default 0.65)
+    unlocks theta-gang mode (covered-call / cash-secured-put).
+    Components
+    ----------
+    sector_win_rate  : sector's realized win rate [0, 1]
+    sector_momentum  : 30-day return of sector ETF [fraction]
+    iv_rank          : current IV rank [0, 100]; >60 = rich premium
+    dte              : days to expiry for the candidate option
+    """
+    score = sector_win_rate * 0.30
+    score += max(0, sector_momentum) * 0.20
+    score += (iv_rank / 100.0) * 0.25
+    if 21 <= dte <= 45:
+        dte_score = 1.0
+    elif 14 <= dte < 21:
+        dte_score = 0.70
+    elif 45 < dte <= 60:
+        dte_score = 0.75
+    else:
+        dte_score = 0.25
+    score += dte_score * 0.25
+    return round(min(score, 1.0), 3)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DeepSeek market prediction")
     parser.add_argument("query", help="Market query to analyze")

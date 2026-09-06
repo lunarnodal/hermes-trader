@@ -92,6 +92,24 @@ CONFIG = {
         (0.12, 1.00, "previous_tier"),  # +12%: sell remaining, stop → +8%
     ],
 }
+# ─── Theta-gang risk defaults ────────────────────────────────────────────────
+
+THETA_CONFIG = {
+    "theta_eligibility_threshold": 0.65,        # score floor to enter options mode
+    "assignment_risk_limit_pct":   0.15,        # max 15% of portfolio in theta exposure
+    "early_close_gap_threshold":   0.05,        # close if underlying gaps >5% overnight
+    "iv_crush_dte_threshold":      7,           # flag IV crush risk when DTE < 7
+}
+
+# ─── Theta-gang risk defaults ────────────────────────────────────────────────
+
+THETA_CONFIG = {
+    "theta_eligibility_threshold": 0.65,        # score floor to enter options mode
+    "assignment_risk_limit_pct":   0.15,        # max 15% of portfolio in theta exposure
+    "early_close_gap_threshold":   0.05,        # close if underlying gaps >5% overnight
+    "iv_crush_dte_threshold":      7,           # flag IV crush risk when DTE < 7
+}
+
 
 
 def init_db() -> sqlite3.Connection:
@@ -163,6 +181,82 @@ def init_db() -> sqlite3.Connection:
             status           TEXT DEFAULT 'pending',
             executed_at      TEXT,
             position_id      INTEGER REFERENCES positions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_positions (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker              TEXT NOT NULL,
+            sector              TEXT,
+            instrument_type     TEXT NOT NULL,  -- 'covered_call' | 'cash_secured_put'
+            strike              REAL NOT NULL,
+            expiry              TEXT NOT NULL,   -- ISO date string
+            premium_collected   REAL NOT NULL,
+            entry_date          TEXT NOT NULL,
+            status              TEXT DEFAULT 'open',
+            assignment_event    TEXT,
+            exit_date           TEXT,
+            exit_price          REAL,
+            pnl                 REAL,
+            pnl_pct             REAL,
+            notes               TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_assignment_events (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            sector              TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            event_date          TEXT NOT NULL,
+            event_type          TEXT NOT NULL,  -- 'exercised' | 'early_close' | 'expired'
+            theta_position_id   INTEGER REFERENCES theta_positions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_risk_params (
+            sector                    TEXT PRIMARY KEY,
+            theta_eligibility_score   REAL DEFAULT 0.0,
+            assignment_count          INTEGER DEFAULT 0,
+            assignment_rate           REAL DEFAULT 0.0,
+            assignment_risk_limit_pct REAL,
+            early_close_gap_threshold REAL,
+            iv_crush_dte_threshold    INTEGER,
+            updated_at                TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_positions (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker              TEXT NOT NULL,
+            sector              TEXT,
+            instrument_type     TEXT NOT NULL,  -- 'covered_call' | 'cash_secured_put'
+            strike              REAL NOT NULL,
+            expiry              TEXT NOT NULL,   -- ISO date string
+            premium_collected   REAL NOT NULL,
+            entry_date          TEXT NOT NULL,
+            status              TEXT DEFAULT 'open',
+            assignment_event    TEXT,
+            exit_date           TEXT,
+            exit_price          REAL,
+            pnl                 REAL,
+            pnl_pct             REAL,
+            notes               TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_assignment_events (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            sector              TEXT NOT NULL,
+            ticker              TEXT NOT NULL,
+            event_date          TEXT NOT NULL,
+            event_type          TEXT NOT NULL,  -- 'exercised' | 'early_close' | 'expired'
+            theta_position_id   INTEGER REFERENCES theta_positions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS theta_risk_params (
+            sector                    TEXT PRIMARY KEY,
+            theta_eligibility_score   REAL DEFAULT 0.0,
+            assignment_count          INTEGER DEFAULT 0,
+            assignment_rate           REAL DEFAULT 0.0,
+            assignment_risk_limit_pct REAL,
+            early_close_gap_threshold REAL,
+            iv_crush_dte_threshold    INTEGER,
+            updated_at                TEXT
         );
 
         CREATE TABLE IF NOT EXISTS portfolio_snapshots (
@@ -613,6 +707,626 @@ def take_snapshot(conn: sqlite3.Connection) -> dict:
         "return_pct":     round(ret_pct, 3),
         "open_positions": open_pos,
     }
+
+
+
+# ─── Theta-gang position tracking ────────────────────────────────────────────
+
+def open_theta_position(conn: sqlite3.Connection,
+                        ticker: str,
+                        sector: str,
+                        instrument_type: str,
+                        strike: float,
+                        expiry: str,
+                        premium_collected: float,
+                        notes: str = "") -> int:
+    """Open a theta-gang position (covered call or cash-secured put)"""
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute("""
+        INSERT INTO theta_positions
+        (ticker, sector, instrument_type, strike, expiry,
+         premium_collected, entry_date, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (ticker, sector, instrument_type, strike, expiry,
+          premium_collected, now, notes))
+    position_id = cursor.lastrowid
+    log.info(f"THETA OPENED: {instrument_type} {ticker} strike=${strike:.2f} "
+             f"expiry={expiry} premium=${premium_collected:.2f}")
+    return position_id
+
+
+def close_theta_position(conn: sqlite3.Connection,
+                         position_id: int,
+                         assignment_event: str,
+                         exit_price: float = None,
+                         notes: str = "") -> dict:
+    """Close a theta position with assignment event tracking"""
+    pos = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike,
+               premium_collected, entry_date
+        FROM theta_positions WHERE id = ? AND status = 'open'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Theta position #{position_id} not found or already closed")
+        return {}
+
+    pos_id, ticker, sector, instrument_type, strike, premium, entry_date = pos
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Calculate P&L
+    pnl = premium
+    if exit_price is not None:
+        # For early close: exit_price is the price paid to buy back the option
+        pnl = premium - abs(exit_price)
+    pnl_pct = (pnl / premium * 100) if premium else 0.0
+
+    new_status = "assigned" if assignment_event == "exercised" else "closed"
+
+    conn.execute("""
+        UPDATE theta_positions
+        SET status=?, assignment_event=?, exit_date=?,
+            exit_price=?, pnl=?, pnl_pct=?, notes=?
+        WHERE id=?
+    """, (new_status, assignment_event, now,
+          exit_price, round(pnl, 2), round(pnl_pct, 2), notes, position_id))
+
+    # Record assignment event in tracking table
+    conn.execute("""
+        INSERT INTO theta_assignment_events
+        (sector, ticker, event_date, event_type, theta_position_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (sector, ticker, now, assignment_event, position_id))
+
+    # Increment assignment count for this sector
+    _increment_sector_assignment_count(conn, sector)
+
+    conn.commit()
+    log.info(f"THETA CLOSED: {ticker} {assignment_event} "
+             f"P&L=${pnl:+.2f} ({pnl_pct:+.1f}%)")
+
+    return {
+        "ticker":           ticker,
+        "sector":          sector,
+        "instrument_type": instrument_type,
+        "strike":          strike,
+        "premium":         premium,
+        "assignment_event": assignment_event,
+        "pnl":             round(pnl, 2),
+        "pnl_pct":         round(pnl_pct, 2),
+    }
+
+
+def get_theta_history(conn: sqlite3.Connection, sector: str) -> list[dict]:
+    """Get all theta positions for a sector, ordered by entry date desc"""
+    rows = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike, expiry,
+               premium_collected, entry_date, status, assignment_event,
+               exit_date, exit_price, pnl, pnl_pct, notes
+        FROM theta_positions
+        WHERE sector = ?
+        ORDER BY entry_date DESC
+    """, (sector,)).fetchall()
+
+    return [
+        {
+            "id":                row[0],
+            "ticker":            row[1],
+            "sector":            row[2],
+            "instrument_type":   row[3],
+            "strike":            row[4],
+            "expiry":            row[5],
+            "premium_collected": row[6],
+            "entry_date":        row[7],
+            "status":            row[8],
+            "assignment_event":  row[9],
+            "exit_date":         row[10],
+            "exit_price":        row[11],
+            "pnl":               row[12],
+            "pnl_pct":           row[13],
+            "notes":             row[14],
+        }
+        for row in rows
+    ]
+
+
+def get_theta_stats(conn: sqlite3.Connection, sector: str) -> dict:
+    """Get aggregated theta stats for a sector"""
+    param_row = conn.execute("""
+        SELECT theta_eligibility_score, assignment_count, assignment_rate,
+               assignment_risk_limit_pct, early_close_gap_threshold,
+               iv_crush_dte_threshold
+        FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    total = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    open_count = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions
+        WHERE sector = ? AND status = 'open'
+    """, (sector,)).fetchone()[0]
+
+    assignment_count = conn.execute("""
+        SELECT COUNT(*) FROM theta_assignment_events WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    pnl_row = conn.execute("""
+        SELECT COALESCE(SUM(pnl), 0), COALESCE(AVG(pnl), 0),
+               COALESCE(SUM(pnl_pct), 0) / COUNT(*)
+        FROM theta_positions
+        WHERE sector = ? AND pnl IS NOT NULL
+    """, (sector,)).fetchone()
+    total_pnl = pnl_row[0]
+    avg_pnl = pnl_row[1]
+    avg_pnl_pct = pnl_row[2] if pnl_row[2] else 0.0
+
+    assignment_rate = (assignment_count / total * 100) if total > 0 else 0.0
+
+    if param_row:
+        eligibility_score = param_row[0]
+        stored_count = param_row[1] or 0
+        stored_rate = param_row[2] or 0.0
+        risk_limit = param_row[3] or THETA_CONFIG["assignment_risk_limit_pct"]
+        gap_thresh = param_row[4] or THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = param_row[5] or THETA_CONFIG["iv_crush_dte_threshold"]
+    else:
+        eligibility_score = 0.0
+        stored_count = 0
+        stored_rate = 0.0
+        risk_limit = THETA_CONFIG["assignment_risk_limit_pct"]
+        gap_thresh = THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = THETA_CONFIG["iv_crush_dte_threshold"]
+
+    return {
+        "sector":                    sector,
+        "theta_eligibility_score":  eligibility_score,
+        "total_theta_trades":        total,
+        "open_theta_trades":         open_count,
+        "assignment_count":          assignment_count,
+        "assignment_rate_pct":       round(assignment_rate, 2),
+        "total_pnl":                 round(total_pnl, 2),
+        "avg_pnl":                   round(avg_pnl, 2),
+        "avg_pnl_pct":               round(avg_pnl_pct, 2),
+        "assignment_risk_limit_pct": risk_limit,
+        "early_close_gap_threshold": gap_thresh,
+        "iv_crush_dte_threshold":    iv_dte,
+    }
+
+
+def update_theta_risk_params(conn: sqlite3.Connection,
+                             sector: str,
+                             theta_eligibility_score: float = None,
+                             assignment_risk_limit_pct: float = None,
+                             early_close_gap_threshold: float = None,
+                             iv_crush_dte_threshold: int = None) -> None:
+    """Set or update per-sector theta risk parameters"""
+    now = datetime.now(timezone.utc).isoformat()
+
+    existing = conn.execute("""
+        SELECT theta_eligibility_score, assignment_risk_limit_pct,
+               early_close_gap_threshold, iv_crush_dte_threshold
+        FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    if existing:
+        score = theta_eligibility_score if theta_eligibility_score is not None else existing[0]
+        risk = assignment_risk_limit_pct if assignment_risk_limit_pct is not None else (existing[1] or THETA_CONFIG["assignment_risk_limit_pct"])
+        gap = early_close_gap_threshold if early_close_gap_threshold is not None else (existing[2] or THETA_CONFIG["early_close_gap_threshold"])
+        iv_dte = iv_crush_dte_threshold if iv_crush_dte_threshold is not None else (existing[3] or THETA_CONFIG["iv_crush_dte_threshold"])
+
+        conn.execute("""
+            UPDATE theta_risk_params
+            SET theta_eligibility_score=?,
+                assignment_risk_limit_pct=?,
+                early_close_gap_threshold=?,
+                iv_crush_dte_threshold=?,
+                updated_at=?
+            WHERE sector=?
+        """, (score, risk, gap, iv_dte, now, sector))
+    else:
+        score = theta_eligibility_score if theta_eligibility_score is not None else 0.0
+        risk = assignment_risk_limit_pct or THETA_CONFIG["assignment_risk_limit_pct"]
+        gap = early_close_gap_threshold or THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = iv_crush_dte_threshold or THETA_CONFIG["iv_crush_dte_threshold"]
+
+        conn.execute("""
+            INSERT INTO theta_risk_params
+            (sector, theta_eligibility_score, assignment_risk_limit_pct,
+             early_close_gap_threshold, iv_crush_dte_threshold, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (sector, score, risk, gap, iv_dte, now))
+
+    conn.commit()
+
+
+def get_open_theta_positions(conn: sqlite3.Connection) -> list[dict]:
+    """Get all open theta positions across all sectors"""
+    rows = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike, expiry,
+               premium_collected, entry_date, notes
+        FROM theta_positions
+        WHERE status = 'open'
+        ORDER BY entry_date ASC
+    """).fetchall()
+
+    return [
+        {
+            "id":                row[0],
+            "ticker":            row[1],
+            "sector":            row[2],
+            "instrument_type":   row[3],
+            "strike":            row[4],
+            "expiry":            row[5],
+            "premium_collected": row[6],
+            "entry_date":        row[7],
+            "notes":             row[8],
+        }
+        for row in rows
+    ]
+
+
+def get_theta_exposure(conn: sqlite3.Connection) -> float:
+    """Total dollar exposure of all open theta positions (premium collected)"""
+    row = conn.execute("""
+        SELECT COALESCE(SUM(premium_collected), 0)
+        FROM theta_positions WHERE status = 'open'
+    """).fetchone()
+    return row[0]
+
+
+# ─── Internal helpers (not exported) ─────────────────────────────────────────
+
+def _increment_sector_assignment_count(conn: sqlite3.Connection, sector: str) -> None:
+    """Increment the assignment count for a sector in theta_risk_params"""
+    now = datetime.now(timezone.utc).isoformat()
+    existing = conn.execute("""
+        SELECT assignment_count FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    if existing and existing[0] is not None:
+        conn.execute("""
+            UPDATE theta_risk_params
+            SET assignment_count = assignment_count + 1, updated_at = ?
+            WHERE sector = ?
+        """, (now, sector))
+    else:
+        conn.execute("""
+            INSERT OR REPLACE INTO theta_risk_params
+            (sector, assignment_count, updated_at)
+            VALUES (?, 1, ?)
+        """, (sector, now))
+
+
+def _update_sector_assignment_rate(conn: sqlite3.Connection, sector: str) -> None:
+    """Recalculate assignment_rate = assignment_count / total_theta_trades for sector"""
+    now = datetime.now(timezone.utc).isoformat()
+    total = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    events = conn.execute("""
+        SELECT COUNT(*) FROM theta_assignment_events WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    rate = events / total if total > 0 else 0.0
+
+    conn.execute("""
+        UPDATE theta_risk_params
+        SET assignment_rate = ?, updated_at = ?
+        WHERE sector = ?
+    """, (rate, now, sector))
+
+
+
+# ─── Theta-gang position tracking ────────────────────────────────────────────
+
+def open_theta_position(conn: sqlite3.Connection,
+                        ticker: str,
+                        sector: str,
+                        instrument_type: str,
+                        strike: float,
+                        expiry: str,
+                        premium_collected: float,
+                        notes: str = "") -> int:
+    """Open a theta-gang position (covered call or cash-secured put)"""
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute("""
+        INSERT INTO theta_positions
+        (ticker, sector, instrument_type, strike, expiry,
+         premium_collected, entry_date, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (ticker, sector, instrument_type, strike, expiry,
+          premium_collected, now, notes))
+    position_id = cursor.lastrowid
+    log.info(f"THETA OPENED: {instrument_type} {ticker} strike=${strike:.2f} "
+             f"expiry={expiry} premium=${premium_collected:.2f}")
+    return position_id
+
+
+def close_theta_position(conn: sqlite3.Connection,
+                         position_id: int,
+                         assignment_event: str,
+                         exit_price: float = None,
+                         notes: str = "") -> dict:
+    """Close a theta position with assignment event tracking"""
+    pos = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike,
+               premium_collected, entry_date
+        FROM theta_positions WHERE id = ? AND status = 'open'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Theta position #{position_id} not found or already closed")
+        return {}
+
+    pos_id, ticker, sector, instrument_type, strike, premium, entry_date = pos
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Calculate P&L
+    pnl = premium
+    if exit_price is not None:
+        # For early close: exit_price is the price paid to buy back the option
+        pnl = premium - abs(exit_price)
+    pnl_pct = (pnl / premium * 100) if premium else 0.0
+
+    new_status = "assigned" if assignment_event == "exercised" else "closed"
+
+    conn.execute("""
+        UPDATE theta_positions
+        SET status=?, assignment_event=?, exit_date=?,
+            exit_price=?, pnl=?, pnl_pct=?, notes=?
+        WHERE id=?
+    """, (new_status, assignment_event, now,
+          exit_price, round(pnl, 2), round(pnl_pct, 2), notes, position_id))
+
+    # Record assignment event in tracking table
+    conn.execute("""
+        INSERT INTO theta_assignment_events
+        (sector, ticker, event_date, event_type, theta_position_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (sector, ticker, now, assignment_event, position_id))
+
+    # Increment assignment count for this sector
+    _increment_sector_assignment_count(conn, sector)
+
+    conn.commit()
+    log.info(f"THETA CLOSED: {ticker} {assignment_event} "
+             f"P&L=${pnl:+.2f} ({pnl_pct:+.1f}%)")
+
+    return {
+        "ticker":           ticker,
+        "sector":          sector,
+        "instrument_type": instrument_type,
+        "strike":          strike,
+        "premium":         premium,
+        "assignment_event": assignment_event,
+        "pnl":             round(pnl, 2),
+        "pnl_pct":         round(pnl_pct, 2),
+    }
+
+
+def get_theta_history(conn: sqlite3.Connection, sector: str) -> list[dict]:
+    """Get all theta positions for a sector, ordered by entry date desc"""
+    rows = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike, expiry,
+               premium_collected, entry_date, status, assignment_event,
+               exit_date, exit_price, pnl, pnl_pct, notes
+        FROM theta_positions
+        WHERE sector = ?
+        ORDER BY entry_date DESC
+    """, (sector,)).fetchall()
+
+    return [
+        {
+            "id":                row[0],
+            "ticker":            row[1],
+            "sector":            row[2],
+            "instrument_type":   row[3],
+            "strike":            row[4],
+            "expiry":            row[5],
+            "premium_collected": row[6],
+            "entry_date":        row[7],
+            "status":            row[8],
+            "assignment_event":  row[9],
+            "exit_date":         row[10],
+            "exit_price":        row[11],
+            "pnl":               row[12],
+            "pnl_pct":           row[13],
+            "notes":             row[14],
+        }
+        for row in rows
+    ]
+
+
+def get_theta_stats(conn: sqlite3.Connection, sector: str) -> dict:
+    """Get aggregated theta stats for a sector"""
+    param_row = conn.execute("""
+        SELECT theta_eligibility_score, assignment_count, assignment_rate,
+               assignment_risk_limit_pct, early_close_gap_threshold,
+               iv_crush_dte_threshold
+        FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    total = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    open_count = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions
+        WHERE sector = ? AND status = 'open'
+    """, (sector,)).fetchone()[0]
+
+    assignment_count = conn.execute("""
+        SELECT COUNT(*) FROM theta_assignment_events WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    pnl_row = conn.execute("""
+        SELECT COALESCE(SUM(pnl), 0), COALESCE(AVG(pnl), 0),
+               COALESCE(SUM(pnl_pct), 0) / COUNT(*)
+        FROM theta_positions
+        WHERE sector = ? AND pnl IS NOT NULL
+    """, (sector,)).fetchone()
+    total_pnl = pnl_row[0]
+    avg_pnl = pnl_row[1]
+    avg_pnl_pct = pnl_row[2] if pnl_row[2] else 0.0
+
+    assignment_rate = (assignment_count / total * 100) if total > 0 else 0.0
+
+    if param_row:
+        eligibility_score = param_row[0]
+        stored_count = param_row[1] or 0
+        stored_rate = param_row[2] or 0.0
+        risk_limit = param_row[3] or THETA_CONFIG["assignment_risk_limit_pct"]
+        gap_thresh = param_row[4] or THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = param_row[5] or THETA_CONFIG["iv_crush_dte_threshold"]
+    else:
+        eligibility_score = 0.0
+        stored_count = 0
+        stored_rate = 0.0
+        risk_limit = THETA_CONFIG["assignment_risk_limit_pct"]
+        gap_thresh = THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = THETA_CONFIG["iv_crush_dte_threshold"]
+
+    return {
+        "sector":                    sector,
+        "theta_eligibility_score":  eligibility_score,
+        "total_theta_trades":        total,
+        "open_theta_trades":         open_count,
+        "assignment_count":          assignment_count,
+        "assignment_rate_pct":       round(assignment_rate, 2),
+        "total_pnl":                 round(total_pnl, 2),
+        "avg_pnl":                   round(avg_pnl, 2),
+        "avg_pnl_pct":               round(avg_pnl_pct, 2),
+        "assignment_risk_limit_pct": risk_limit,
+        "early_close_gap_threshold": gap_thresh,
+        "iv_crush_dte_threshold":    iv_dte,
+    }
+
+
+def update_theta_risk_params(conn: sqlite3.Connection,
+                             sector: str,
+                             theta_eligibility_score: float = None,
+                             assignment_risk_limit_pct: float = None,
+                             early_close_gap_threshold: float = None,
+                             iv_crush_dte_threshold: int = None) -> None:
+    """Set or update per-sector theta risk parameters"""
+    now = datetime.now(timezone.utc).isoformat()
+
+    existing = conn.execute("""
+        SELECT theta_eligibility_score, assignment_risk_limit_pct,
+               early_close_gap_threshold, iv_crush_dte_threshold
+        FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    if existing:
+        score = theta_eligibility_score if theta_eligibility_score is not None else existing[0]
+        risk = assignment_risk_limit_pct if assignment_risk_limit_pct is not None else (existing[1] or THETA_CONFIG["assignment_risk_limit_pct"])
+        gap = early_close_gap_threshold if early_close_gap_threshold is not None else (existing[2] or THETA_CONFIG["early_close_gap_threshold"])
+        iv_dte = iv_crush_dte_threshold if iv_crush_dte_threshold is not None else (existing[3] or THETA_CONFIG["iv_crush_dte_threshold"])
+
+        conn.execute("""
+            UPDATE theta_risk_params
+            SET theta_eligibility_score=?,
+                assignment_risk_limit_pct=?,
+                early_close_gap_threshold=?,
+                iv_crush_dte_threshold=?,
+                updated_at=?
+            WHERE sector=?
+        """, (score, risk, gap, iv_dte, now, sector))
+    else:
+        score = theta_eligibility_score if theta_eligibility_score is not None else 0.0
+        risk = assignment_risk_limit_pct or THETA_CONFIG["assignment_risk_limit_pct"]
+        gap = early_close_gap_threshold or THETA_CONFIG["early_close_gap_threshold"]
+        iv_dte = iv_crush_dte_threshold or THETA_CONFIG["iv_crush_dte_threshold"]
+
+        conn.execute("""
+            INSERT INTO theta_risk_params
+            (sector, theta_eligibility_score, assignment_risk_limit_pct,
+             early_close_gap_threshold, iv_crush_dte_threshold, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (sector, score, risk, gap, iv_dte, now))
+
+    conn.commit()
+
+
+def get_open_theta_positions(conn: sqlite3.Connection) -> list[dict]:
+    """Get all open theta positions across all sectors"""
+    rows = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike, expiry,
+               premium_collected, entry_date, notes
+        FROM theta_positions
+        WHERE status = 'open'
+        ORDER BY entry_date ASC
+    """).fetchall()
+
+    return [
+        {
+            "id":                row[0],
+            "ticker":            row[1],
+            "sector":            row[2],
+            "instrument_type":   row[3],
+            "strike":            row[4],
+            "expiry":            row[5],
+            "premium_collected": row[6],
+            "entry_date":        row[7],
+            "notes":             row[8],
+        }
+        for row in rows
+    ]
+
+
+def get_theta_exposure(conn: sqlite3.Connection) -> float:
+    """Total dollar exposure of all open theta positions (premium collected)"""
+    row = conn.execute("""
+        SELECT COALESCE(SUM(premium_collected), 0)
+        FROM theta_positions WHERE status = 'open'
+    """).fetchone()
+    return row[0]
+
+
+# ─── Internal helpers (not exported) ─────────────────────────────────────────
+
+def _increment_sector_assignment_count(conn: sqlite3.Connection, sector: str) -> None:
+    """Increment the assignment count for a sector in theta_risk_params"""
+    now = datetime.now(timezone.utc).isoformat()
+    existing = conn.execute("""
+        SELECT assignment_count FROM theta_risk_params WHERE sector = ?
+    """, (sector,)).fetchone()
+
+    if existing and existing[0] is not None:
+        conn.execute("""
+            UPDATE theta_risk_params
+            SET assignment_count = assignment_count + 1, updated_at = ?
+            WHERE sector = ?
+        """, (now, sector))
+    else:
+        conn.execute("""
+            INSERT OR REPLACE INTO theta_risk_params
+            (sector, assignment_count, updated_at)
+            VALUES (?, 1, ?)
+        """, (sector, now))
+
+
+def _update_sector_assignment_rate(conn: sqlite3.Connection, sector: str) -> None:
+    """Recalculate assignment_rate = assignment_count / total_theta_trades for sector"""
+    now = datetime.now(timezone.utc).isoformat()
+    total = conn.execute("""
+        SELECT COUNT(*) FROM theta_positions WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    events = conn.execute("""
+        SELECT COUNT(*) FROM theta_assignment_events WHERE sector = ?
+    """, (sector,)).fetchone()[0]
+
+    rate = events / total if total > 0 else 0.0
+
+    conn.execute("""
+        UPDATE theta_risk_params
+        SET assignment_rate = ?, updated_at = ?
+        WHERE sector = ?
+    """, (rate, now, sector))
 
 
 if __name__ == "__main__":

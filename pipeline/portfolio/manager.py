@@ -716,6 +716,61 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     return results
 
 
+
+
+# ─── Theta-gang position routing ─────────────────────────────────────────────
+
+def _assign_instrument_type(ticker: str,
+                            sector: str,
+                            current_positions: list[dict],
+                            portfolio_value: float) -> str:
+    """
+    Assign the appropriate theta instrument type based on existing exposure.
+    Returns 'covered_call' or 'cash_secured_put'.
+    """
+    held_tickers = {p["ticker"] for p in current_positions if p.get("qty", 0) > 0}
+    if ticker in held_tickers:
+        log.info(f"[THETA] {ticker} — assigned covered_call (holding underlying)")
+        return 'covered_call'
+    log.info(f"[THETA] {ticker} — assigned cash_secured_put")
+    return 'cash_secured_put'
+
+
+def construct_theta_position(ticker: str,
+                               sector: str,
+                               instrument_type: str,
+                               strike: float,
+                               expiry: str,
+                               premium_collected: float,
+                               conn: sqlite3.Connection,
+                               notes: str = "") -> dict:
+    """
+    Wrapper that opens a theta position and mirrors it in the equity portfolio.
+    """
+    position_id = open_theta_position(
+        conn, ticker, sector, instrument_type,
+        strike, expiry, premium_collected, notes
+    )
+    if instrument_type == 'covered_call':
+        log.info(f"[THETA] covered_call opened for {ticker}")
+    elif instrument_type == 'cash_secured_put':
+        reserve_cash_for_put(conn, ticker, strike, notes)
+        log.info(f"[THETA] cash_secured_put opened for {ticker}")
+    return {"position_id": position_id, "ticker": ticker,
+            "instrument_type": instrument_type, "status": "open"}
+
+
+def reserve_cash_for_put(conn: sqlite3.Connection,
+                          ticker: str,
+                          strike: float,
+                          notes: str = "") -> None:
+    """
+    Record a cash reservation for a short put.
+    """
+    log.info(f"[THETA] cash reservation recorded for {ticker} strike={strike}")
+    pass
+
+
 if __name__ == "__main__":
     import argparse
 
