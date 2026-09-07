@@ -606,6 +606,23 @@ def generate_recommendations(predictions: list[dict],
                          f"assign={theta_breakdown['assignment_component']:.3f} "
                          f"liq={theta_breakdown['liquidity_component']:.3f})")
 
+                # ── Emit theta-gang instrument variant (additive to equity signal) ──
+                cash_required = 100 * stock["current_price"] * 1.0  # margin buffer per contract
+                if cash >= cash_required:
+                    recommendations.append({
+                        "ticker":           ticker,
+                        "action":           "BUY",
+                        "instrument":       "THETA_CC" if direction == "bullish" else "THETA_CSP",
+                        "theta_score":      theta_score,
+                        "theta_breakdown":  theta_breakdown,
+                        "cash_required":    cash_required,
+                        "rationale":        f"[THETA] {ticker} theta-gang eligible ── " + stock["rationale"][:80],
+                        "sector":           sector,
+                        "signal_count":     stock["signal_count"],
+                        "avg_confidence":   stock["avg_conf"],
+                        "current_price":    stock["current_price"],
+                    })
+
             # Calculate position size
             sizing = calculate_position_size(
                 confidence, stock["current_price"],
