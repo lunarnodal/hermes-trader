@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from portfolio.db import (
     init_db, get_cash_balance, get_open_positions, get_portfolio_value,
     get_sector_exposure, positions_this_week, open_position, close_position,
-    partial_close_position, take_snapshot, calculate_position_size, CONFIG
+    partial_close_position, take_snapshot, calculate_position_size, CONFIG,
+    open_theta_position
 )
 from portfolio.selector import (
     get_recent_signals, generate_recommendations, fetch_current_price
