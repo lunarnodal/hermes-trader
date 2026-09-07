@@ -70,10 +70,19 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "commodity_shortage", "supply_disruption", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
+  sec_filing: SEC Form 4 filings for executive stock transactions. Classification requires ALL THREE criteria:
+    (1) executive title: CEO, CFO, COO, CTO, CSO, CMO, CHRO, CLO, CRO, CFO/Treasurer, EVP, SVP, VP, President, Director, or board-level title (Chair, Vice-Chair) — but NOT generic "VP of Marketing" or "VP of Sales"
+    (2) dollar amount: buy/sell amount expressed as dollar value (e.g. "$120", "$3,672", "$2.04m", "$220,300")
+    (3) stock phrase: "in company stock", "in common stock", "in shares", or equivalent ownership description
+    EXCLUDE: institutional managers (BlackRock, Vanguard, State Street, T. Rowe Price, Fidelity, JP Morgan asset management, etc.) — these are not "executives" even if they hold titles
+    EDGE CASES:
+      - leadership_transition without stock phrase -> leadership_transition (not sec_filing)
+      - investigations/insider trading probes -> regulatory (not sec_filing)
+      - tax-driven sales without Form 4 context -> other
 - macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
 - summary: max 2 sentence plain English summary of market impact
 
@@ -93,10 +102,19 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "commodity_shortage", "supply_disruption", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
+  sec_filing: SEC Form 4 filings for executive stock transactions. Classification requires ALL THREE criteria:
+    (1) executive title: CEO, CFO, COO, CTO, CSO, CMO, CHRO, CLO, CRO, CFO/Treasurer, EVP, SVP, VP, President, Director, or board-level title (Chair, Vice-Chair) — but NOT generic "VP of Marketing" or "VP of Sales"
+    (2) dollar amount: buy/sell amount expressed as dollar value (e.g. "$120", "$3,672", "$2.04m", "$220,300")
+    (3) stock phrase: "in company stock", "in common stock", "in shares", or equivalent ownership description
+    EXCLUDE: institutional managers (BlackRock, Vanguard, State Street, T. Rowe Price, Fidelity, JP Morgan asset management, etc.) — these are not "executives" even if they hold titles
+    EDGE CASES:
+      - leadership_transition without stock phrase -> leadership_transition (not sec_filing)
+      - investigations/insider trading probes -> regulatory (not sec_filing)
+      - tax-driven sales without Form 4 context -> other
 - macro_themes: array of applicable themes (pick all that apply, or []): interest_rate_increase, interest_rate_decrease, fed_policy, central_bank_policy, yield_curve, bond_yields, inflation_fighting, real_yields, military_conflict, trade_sanctions, diplomatic_tension, iran
 - summary: max 2 sentence plain English summary of market impact
 
