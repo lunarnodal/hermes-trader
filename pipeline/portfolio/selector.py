@@ -427,6 +427,24 @@ def generate_recommendations(predictions: list[dict],
                 sector = s
                 break
 
+
+        # Hard-block: macro/S&P predictions - 0% win rate (0/6) on bearish,
+        # 27% win rate on bullish (all-time data through Sep 2026).
+        # Block runs after sector extraction, before existing win-rate gate.
+        if sector == "macro":
+            log.info(
+                f"HARD BLOCK macro: sector win_rate=28% - macro predictions "
+                f"excluded from auto-trading (0/6 bearish, 27% bullish all-time)"
+            )
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="macro_hard_block",
+                reason="macro sector excluded: 0% win rate bearish, 27% bullish all-time",
+                sector_win_rate=0.28
+            )
+            continue
+
         # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
         # Hermes analysis (2026-08-31): challenge verdict reduces confidence but doesn't
         # block execution. This gate prevents the critic's "weak sector" warnings from
