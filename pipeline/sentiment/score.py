@@ -70,9 +70,13 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
-  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  leadership_transition: appoints [person] as [corporate title]. Classification rules:
+    (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
+    (2) EXCLUDE auditor appointments: 'appoints [firm] as auditor' -> classify as 'regulatory', NOT 'leadership_transition'
+    (3) EXCLUDE S&P 500 listings: 'named [to S&P 500]' patterns -> classify as 'corporate_governance' or 'market_structure', NOT 'leadership_transition'
+    (4) EXCLUDE generic 'becomes' without title context: 'becomes [general news]' -> classify as 'other', NOT 'leadership_transition
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
   sec_filing: SEC Form 4 filings for executive stock transactions. Classification requires ALL THREE criteria:
     (1) executive title: CEO, CFO, COO, CTO, CSO, CMO, CHRO, CLO, CRO, CFO/Treasurer, EVP, SVP, VP, President, Director, or board-level title (Chair, Vice-Chair) — but NOT generic "VP of Marketing" or "VP of Sales"
@@ -102,9 +106,13 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
-  leadership_transition: CEO/CFO/board changes, executive departures, succession announcements — always tag the affected company ticker
+  leadership_transition: appoints [person] as [corporate title]. Classification rules:
+    (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
+    (2) EXCLUDE auditor appointments: 'appoints [firm] as auditor' -> classify as 'regulatory', NOT 'leadership_transition'
+    (3) EXCLUDE S&P 500 listings: 'named [to S&P 500]' patterns -> classify as 'corporate_governance' or 'market_structure', NOT 'leadership_transition'
+    (4) EXCLUDE generic 'becomes' without title context: 'becomes [general news]' -> classify as 'other', NOT 'leadership_transition
   corporate_governance: shareholder votes, board restructuring, activist investors, proxy fights
   sec_filing: SEC Form 4 filings for executive stock transactions. Classification requires ALL THREE criteria:
     (1) executive title: CEO, CFO, COO, CTO, CSO, CMO, CHRO, CLO, CRO, CFO/Treasurer, EVP, SVP, VP, President, Director, or board-level title (Chair, Vice-Chair) — but NOT generic "VP of Marketing" or "VP of Sales"

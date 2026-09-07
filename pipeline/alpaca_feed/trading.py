@@ -124,6 +124,65 @@ def get_all_positions() -> list[dict]:
         return []
 
 
+def get_theta_positions() -> list[dict]:
+    """
+    Get short options positions for theta-gang tracking.
+    Calls Alpaca get_all_positions, filters for short options
+    (short_call/short_put), parses option symbols for strike/expiry,
+    computes premium (avg_price * qty), and flags assignment_risk
+    when underlying price is within 10% of strike.
+    Returns list of dicts with:
+      ticker, option_symbol, instrument_type (covered_call/cash_secured_put),
+      strike, expiry, premium, assignment_risk
+    """
+    try:
+        positions = get_all_positions()
+        theta_positions = []
+        for pos in positions:
+            symbol = pos.get("ticker", "")
+            if len(symbol) < 14 or not any(c.isdigit() for c in symbol[3:8]):
+                continue
+            if symbol[8] not in ("C", "P"):
+                continue
+            if pos.get("qty", 0) >= 0:
+                continue
+            try:
+                underlying = symbol[:3].strip()
+                date_str = symbol[3:8]
+                cp = symbol[8]
+                strike = float(symbol[9:]) / 1000.0
+                year = 2000 + int(date_str[:2])
+                month = int(date_str[2:4])
+                day = int(date_str[4:6])
+                expiry = f"{year}-{month:02d}-{day:02d}"
+                instrument_type = "covered_call" if cp == "C" else "cash_secured_put"
+                qty = abs(pos.get("qty", 0))
+                premium = pos.get("avg_cost", 0) * qty * 100
+                current = pos.get("current_price", 0)
+                assignment_risk = False
+                if current and strike:
+                    if cp == "C" and current >= strike * 0.9:
+                        assignment_risk = True
+                    elif cp == "P" and current <= strike * 1.1:
+                        assignment_risk = True
+                theta_positions.append({
+                    "ticker": underlying,
+                    "option_symbol": symbol,
+                    "instrument_type": instrument_type,
+                    "strike": strike,
+                    "expiry": expiry,
+                    "premium": round(premium, 2),
+                    "assignment_risk": assignment_risk,
+                })
+            except (ValueError, IndexError) as e:
+                log.debug(f"Could not parse option symbol {symbol}: {e}")
+                continue
+        return theta_positions
+    except Exception as e:
+        log.warning(f"Could not fetch theta positions: {e}")
+        return []
+
+
 def close_position(ticker: str, reason: str = "") -> dict:
     """Close entire position for a ticker"""
     try:

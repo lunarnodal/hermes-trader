@@ -203,6 +203,11 @@ STATIC_DEPENDENCIES = {
         ("financials",  "bullish", "economic health signal"),
         ("technology",  "bearish", "Fed less likely to cut rates"),
     ],
+    "market_trend": [
+        ("ai_infrastructure", "bullish", "market trend signals affect AI infrastructure demand"),
+        ("semiconductors", "bullish", "market trend drives chip demand"),
+        ("technology", "bullish", "market trend affects technology sector"),
+    ],
     "jobs_weak": [
         ("consumer",    "bearish", "unemployment reduces spending"),
         ("technology",  "bullish", "Fed more likely to cut rates"),

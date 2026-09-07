@@ -412,6 +412,7 @@ def generate_recommendations(predictions: list[dict],
         sector = "macro"
         sector_keywords = {
             "energy":      ["energy", "oil", "gas", "utilities", "renewables"],
+            "ai_infrastructure": ["ai infrastructure", "data center", "gpu demand", "hyperscaler", "ai infrastructure buildout", "data centre"],
             "technology":  ["technology", "ai", "semiconductor", "data center", "gpu", "hyperscaler", "ai infrastructure", "data centre"],
             "financials":  ["financial", "bank", "rates", "real estate"],
             "healthcare":  ["healthcare", "biotech", "pharma"],
@@ -431,7 +432,7 @@ def generate_recommendations(predictions: list[dict],
         # block execution. This gate prevents the critic's "weak sector" warnings from
         # being overridden by marginal confidence scores.
         sector_win_rates = {
-            "technology": 0.44, "energy": 0.38, "healthcare": 0.35,
+            "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38, "healthcare": 0.35,
             "consumer": 0.30, "industrials": 0.14, "macro": 0.28,
             "materials": 0.27, "financials": 0.21, "defense": 0.50,
         }
@@ -456,7 +457,7 @@ def generate_recommendations(predictions: list[dict],
         # Dynamic fuel-trim system — LTFT absorbs STFT over time
         # Falls back to hardcoded defaults if DB unavailable
         _default_penalties = {
-            "technology": 0.10, "energy": 0.05, "healthcare": 0.05,
+            "ai_infrastructure": 0.10, "technology": 0.10, "energy": 0.05, "healthcare": 0.05,
             "consumer": 0.05, "industrials": 0.35, "macro": 0.20,
             "materials": 0.20, "financials": 0.20, "defense": 0.0,
         }

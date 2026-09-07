@@ -1,0 +1,57 @@
+{
+  "cards": [
+    {
+      "card_id": "causality-20260907-macro-compositing",
+      "title": "Add macro market compositing rule",
+      "risk": "low",
+      "sectors": ["pipeline", "rules"],
+      "owner": "coder/applier/verifier",
+      "finding_num": "1",
+      "finding_name": "Macro Overall Market Outlook — 0% Win Rate",
+      "finding_summary": "Macro 'overall market outlook' predictor is 0/3 on bearish calls. No cross-sector compositing rule exists — sector-level signals (Iran strikes, European gas spike) are correctly routed individually but not chained into a coherent market-level view.",
+      "recommendation": "Create a rule that composes sector-level signal aggregations into a market-level confidence score before issuing macro direction calls. Weight the most-confident sector signals, not a blanket bearish sentiment.",
+      "discovered_date": "2026-09-07T13:00:00+00:00",
+      "report_file": "causality_report_2026-09-07.md"
+    },
+    {
+      "card_id": "causality-20260907-energy-conflict-resolution",
+      "title": "Add signal conflict-resolution step in energy sector predictor",
+      "risk": "low",
+      "sectors": ["pipeline", "rules"],
+      "owner": "coder/applier/verifier",
+      "finding_num": "2",
+      "finding_name": "Confidence Does Not Predict Accuracy — Energy Sector",
+      "finding_summary": "Energy sector predictor has 33% win rate despite 68% avg confidence. Two high-confidence bearish signals (0.85 each) on Iran/geopolitical energy themes conflicted with bullish predictions. No conflict-resolution logic within sector.",
+      "recommendation": "Add conflict-resolution step: when multiple signals with >0.70 confidence point in opposite directions for the same sector, the predictor should either reduce confidence or split into directional sub-predictions.",
+      "discovered_date": "2026-09-07T13:00:00+00:00",
+      "report_file": "causality_report_2026-09-07.md"
+    },
+    {
+      "card_id": "causality-20260907-signal-classification",
+      "title": "Add new signal event types: analyst_initiation, analyst_rating_maintenance, index_inclusion, ceo_transition, cfo_resignation",
+      "risk": "low",
+      "sectors": ["signal-quality"],
+      "owner": "coder/applier/verifier",
+      "finding_num": "3",
+      "finding_name": "28.8% of Signals Tagged 'Other'",
+      "finding_summary": "576/2000 sampled signals are 'other'. Recurring misclassifications: analyst initiations (Rosenblatt Airbnb buy), S&P 500 inclusions (BE/EVER/ILMN), CFO buys/sells, CEO transitions. Systematic patterns need dedicated event types.",
+      "recommendation": "Add signal classification rules for: analyst_initiation, analyst_rating_maintenance, index_inclusion, ceo_transition (separate from leadership_transition), cfo_resignation (separate — historically more bearish per indirect dependency ID 220).",
+      "discovered_date": "2026-09-07T13:00:00+00:00",
+      "report_file": "causality_report_2026-09-07.md"
+    },
+    {
+      "card_id": "causality-20260907-insider-trading-consistency",
+      "title": "Audit and fix inconsistent insider_trading tagging",
+      "risk": "low",
+      "sectors": ["signal-quality"],
+      "owner": "coder/applier/verifier",
+      "finding_num": "4",
+      "finding_name": "Insider Trading Inconsistent Tagging",
+      "finding_summary": "Medalist CFO buy and Nurix CSO sell both fell to 'other' despite being clear insider transactions. System has some insider_trading tagging but coverage is incomplete.",
+      "recommendation": "Audit signal classifier for insider_trading coverage. Ensure all CFO/CSO buy/sell transactions are tagged insider_trading, not 'other'.",
+      "discovered_date": "2026-09-07T13:00:00+00:00",
+      "report_file": "causality_report_2026-09-07.md"
+    }
+  ],
+  "last_scan": "2026-09-07T13:00:00+00:00"
+}
