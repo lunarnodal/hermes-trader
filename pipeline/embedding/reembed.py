@@ -19,7 +19,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 QDRANT_HOST    = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT    = int(os.getenv("QDRANT_PORT", 6333))
 COLLECTION     = os.getenv("QDRANT_COLLECTION", "trading_signals")
-OLLAMA_HOST    = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
+OLLAMA_HOST    = os.getenv("OLLAMA_HOST", "http://172.29.10.225:8081")
 EMBED_MODEL    = "bge-m3"
 VECTOR_SIZE    = 1024
 SIGNALS_DIR    = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
@@ -36,11 +36,13 @@ def signal_to_point_id(guid: str) -> str:
 
 def embed_text(text: str) -> list[float] | None:
     try:
-        resp = requests.post(f"{OLLAMA_HOST}/api/embed",
+        resp = requests.post(f"{OLLAMA_HOST}/v1/embeddings",
             json={"model": EMBED_MODEL, "input": text}, timeout=30)
         resp.raise_for_status()
-        embeddings = resp.json().get("embeddings", [])
-        return embeddings[0] if embeddings else None
+        data = resp.json().get("data", [])
+        if data:
+            return data[0].get("embedding")
+        return None
     except Exception as e:
         log.error(f"Embedding failed: {e}")
         return None
