@@ -70,6 +70,24 @@ SECTOR_ETFS = {
 MIN_SIGNALS_FOR_STOCK = 2
 MIN_SIGNALS_BEARISH_OVERRIDE = 3  # bearish signals needed to suppress bullish entry
 
+# Per event_type threshold overrides
+# When an event_type has an entry here, its specific thresholds and
+# weight_multiplier replace the global defaults for scoring/filtering.
+# This allows niche but high-conviction event types (e.g. ai_infrastructure)
+# to flow through with relaxed thresholds.
+EVENT_TYPE_CONFIG = {
+    ai_infrastructure: {
+        min_signals: 1,
+        min_confidence: 0.65,
+        weight_multiplier: 1.25,
+    },
+    market_trend: {
+        min_signals: 1,
+        min_confidence: 0.70,
+        weight_multiplier: 1.15,
+    },
+}
+
 
 def get_recent_signals(hours_back: int = 48) -> list[dict]:
     """Load recent scored signals from QNAP"""
@@ -142,6 +160,19 @@ def score_ticker(ticker: str, signals: list[dict]) -> dict:
         avg_recency     * 0.2
     )
     composite = signal_composite * 0.7 + enrichment_boost
+
+    # Apply per-event_type weight_multiplier if any signal matches a config entry
+    if EVENT_TYPE_CONFIG:
+        event_types_in_signals = set()
+        for s in ticker_signals:
+            et = s.get(event_type)
+            if et:
+                event_types_in_signals.add(et)
+        for et in event_types_in_signals:
+            cfg = EVENT_TYPE_CONFIG.get(et)
+            if cfg:
+                composite *= cfg[weight_multiplier]
+                break  # apply highest-priority match (first match)
 
     return {
         "ticker":       ticker,
@@ -280,12 +311,30 @@ def select_stocks_for_sector(sector: str,
             log.debug(f"  {ticker} skipped — sector mismatch")
             continue
         score_data = score_ticker(ticker, signals)
+
+        # Determine per-event_type thresholds (override globals if configured)
+        _min_signals = MIN_SIGNALS_FOR_STOCK
+        _min_conf = 0.75
+        if EVENT_TYPE_CONFIG:
+            _event_types = set()
+            for s in signals:
+                if ticker in s.get("tickers", []):
+                    et = s.get("event_type")
+                    if et:
+                        _event_types.add(et)
+            for et in _event_types:
+                cfg = EVENT_TYPE_CONFIG.get(et)
+                if cfg:
+                    _min_signals = cfg["min_signals"]
+                    _min_conf = cfg["min_confidence"]
+                    break  # apply highest-priority match
+
         meets_threshold = (
-            # Standard: 2+ signals any confidence
-            score_data["signal_count"] >= MIN_SIGNALS_FOR_STOCK or
-            # High confidence: 1 signal OK if conf >= 0.80
-            (score_data["signal_count"] == 1 and score_data["avg_conf"] >= 0.75)
-        )
+            # Standard: configured min_signals any confidence
+            score_data["signal_count"] >= _min_signals or
+            # High confidence: 1 signal OK if conf >= configured min_confidence
+            (score_data["signal_count"] == 1 and score_data["avg_conf"] >= _min_conf)
+)
         if meets_threshold and score_data["sentiment"] == "bullish":
             scored.append(score_data)
 
