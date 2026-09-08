@@ -315,6 +315,14 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         </tbody>
       </table>
     </div>
+  <div class="card" draggable="true" id="card-theta">
+    <div class="card-header">
+      <span class="card-title">Theta gang</span>
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+    </div>
+    <div id="thetaCard">
+      <div class="gray" style="font-size:12px">Loading...</div>
+    </div>
   </div>
 
 </div>
@@ -743,8 +751,52 @@ async function loadData() {
         <td class="timestamp">${c.date}</td>
       </tr>`).join('')
     : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>';
+  renderThetaCard(data.theta);
 }
 
+
+// Theta card renderer
+function renderThetaCard(theta) {
+  if (!theta || !theta.aggregate) {
+    document.getElementById('thetaCard').innerHTML =
+      '<div class="gray" style="font-size:12px">No theta data</div>';
+    return;
+  }
+  const agg = theta.aggregate;
+  const fmtPrem = v => '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const statsHtml = '<div style="display:flex;gap:16px;margin-bottom:12px">' +
+    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:#10B981">'+agg.total_count+'</div><div style="font-size:11px;color:#8b949e">Open positions</div></div>' +
+    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:#fbbf24">'+fmtPrem(agg.total_premium)+'</div><div style="font-size:11px;color:#8b949e">Total premium</div></div>' +
+    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:'+(agg.assignment_risk_count>0?'#EF4444':'#10B981')+'">'+agg.assignment_risk_count+'</div><div style="font-size:11px;color:#8b949e">Assignment risk</div></div>' +
+    '</div>';
+  function posRows(positions, accountLabel) {
+    if (!positions || positions.length === 0) {
+      return '<div style="font-size:11px;color:#8b949e;padding:6px 0">'+accountLabel+': No positions</div>';
+    }
+    const rows = positions.map(function(p) {
+      const dte = Math.max(0, Math.ceil((new Date(p.expiry)-new Date())/86400000));
+      const dteColor = dte<=5?'#EF4444':dte<=14?'#e3b341':'#10B981';
+      const riskColor = p.assignment_risk?'#EF4444':'#8b949e';
+      return '<tr style="border-bottom:1px solid #161b22">'+
+        '<td style="padding:3px 4px;font-weight:600">'+p.ticker+'</td>'+
+        '<td style="padding:3px 4px;color:#8b949e">'+(p.instrument_type==='covered_call'?'CC':'CSP')+'</td>'+
+        '<td style="text-align:right;padding:3px 4px">$'+p.strike.toFixed(0)+'</td>'+
+        '<td style="text-align:right;padding:3px 4px;color:'+dteColor+'">'+dte+'</td>'+
+        '<td style="text-align:right;padding:3px 4px;color:'+riskColor+'">'+fmtPrem(p.premium)+'</td>'+
+        '</tr>';
+    }).join('');
+    return '<div style="font-size:11px;color:#6e7681;margin:6px 0 3px">'+accountLabel+'</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<thead><tr style="border-bottom:1px solid #1f2937">'+
+      '<th style="text-align:left;padding:3px 4px">Ticker</th>'+
+      '<th style="text-align:left;padding:3px 4px">Type</th>'+
+      '<th style="text-align:right;padding:3px 4px">Strike</th>'+
+      '<th style="text-align:right;padding:3px 4px">DTE</th>'+
+      '<th style="text-align:right;padding:3px 4px">Premium</th>'+
+      '</tr></thead><tbody>'+rows+'</tbody></table>';
+  }
+  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.organic && theta.organic.positions, 'Organic') + posRows(theta.hackathon && theta.hackathon.positions, 'Hackathon');
+}
 // Drag and drop
 let dragSrc = null;
 function initDrag() {
@@ -1188,6 +1240,30 @@ def api_data():
         _pc2.close()
     except Exception as e:
         data['cash_yield'] = {}
+
+
+    # Theta gang — short options positions
+    try:
+        from alpaca_feed.trading import get_theta_positions
+        theta_raw = get_theta_positions()
+        # Separate organic vs hackathon accounts by ticker conventions
+        organic_tickers = {'AAPL','MSFT','NVDA','GOOGL','AMZN','META','TSLA','AMD','INTC','QCOM'}
+        organic_pos = [p for p in theta_raw if p["ticker"] in organic_tickers]
+        hackathon_pos = [p for p in theta_raw if p["ticker"] not in organic_tickers]
+        total_premium = sum(p["premium"] for p in theta_raw)
+        assignment_risk_count = sum(1 for p in theta_raw if p["assignment_risk"])
+        data["theta"] = {
+            "organic": {"positions": organic_pos, "count": len(organic_pos)},
+            "hackathon": {"positions": hackathon_pos, "count": len(hackathon_pos)},
+            "aggregate": {
+                "total_premium": round(total_premium, 2),
+                "assignment_risk_count": assignment_risk_count,
+                "total_count": len(theta_raw),
+            }
+        }
+    except Exception as e:
+        log.warning(f"Theta positions unavailable: {e}")
+        data["theta"] = {}
 
     return jsonify(data)
 
