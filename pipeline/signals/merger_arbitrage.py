@@ -23,7 +23,16 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-from alpaca_feed.data import fetch_current_price
+from alpaca_feed.data import get_live_prices
+
+def fetch_current_price(ticker: str) -> float | None:
+    """Fetch current price for a single ticker via Alpaca feed."""
+    try:
+        prices = get_live_prices([ticker])
+        return prices.get(ticker)
+    except Exception:
+        return None
+
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
