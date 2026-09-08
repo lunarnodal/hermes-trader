@@ -439,13 +439,24 @@ def generate_recommendations(predictions: list[dict],
         query     = pred.get("query", "")
 
         # Only act on bullish predictions with sufficient confidence
-        if direction != "bullish" or confidence < 0.70:
+        # Exception: bullish 50-70% conf can still trigger theta-gang (CSP)
+        if direction != "bullish":
             log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
             _log_rejected_signal(
                 sector="unknown", query=query, direction=direction,
                 raw_conf=confidence, adj_conf=confidence,
                 gate="direction_confidence",
                 reason=f"direction={direction} conf={confidence:.2f} < 0.70"
+            )
+            continue
+        theta_only = confidence < 0.70  # below equity threshold — theta path only
+        if confidence < 0.50:
+            log.info(f"Skipping bullish prediction (conf={confidence:.2f}) — below theta floor")
+            _log_rejected_signal(
+                sector="unknown", query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="direction_confidence",
+                reason=f"conf={confidence:.2f} < 0.50 (theta floor)"
             )
             continue
 
@@ -702,6 +713,11 @@ def generate_recommendations(predictions: list[dict],
                         "avg_confidence":   stock["avg_conf"],
                         "current_price":    stock["current_price"],
                     })
+
+            # Skip equity entry if below confidence threshold (theta-only mode)
+            if theta_only:
+                log.info(f"[THETA] {ticker} conf={confidence:.0%} — theta-only, skipping equity entry")
+                continue
 
             # Calculate position size
             sizing = calculate_position_size(
