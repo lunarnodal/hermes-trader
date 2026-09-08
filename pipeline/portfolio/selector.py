@@ -76,20 +76,20 @@ MIN_SIGNALS_BEARISH_OVERRIDE = 3  # bearish signals needed to suppress bullish e
 # This allows niche but high-conviction event types (e.g. ai_infrastructure)
 # to flow through with relaxed thresholds.
 EVENT_TYPE_CONFIG = {
-    ai_infrastructure: {
-        min_signals: 1,
-        min_confidence: 0.65,
-        weight_multiplier: 1.25,
+    "ai_infrastructure": {
+        "min_signals": 1,
+        "min_confidence": 0.65,
+        "weight_multiplier": 1.25,
     },
-    market_trend: {
-        min_signals: 1,
-        min_confidence: 0.70,
-        weight_multiplier: 1.15,
+    "market_trend": {
+        "min_signals": 1,
+        "min_confidence": 0.70,
+        "weight_multiplier": 1.15,
     },
-    merger_arbitrage: {
-        min_signals: 1,
-        min_confidence: 0.60,
-        weight_multiplier: 1.20,
+    "merger_arbitrage": {
+        "min_signals": 1,
+        "min_confidence": 0.60,
+        "weight_multiplier": 1.20,
     },
 }
 
@@ -170,13 +170,13 @@ def score_ticker(ticker: str, signals: list[dict]) -> dict:
     if EVENT_TYPE_CONFIG:
         event_types_in_signals = set()
         for s in ticker_signals:
-            et = s.get(event_type)
+            et = s.get("event_type")
             if et:
                 event_types_in_signals.add(et)
         for et in event_types_in_signals:
             cfg = EVENT_TYPE_CONFIG.get(et)
             if cfg:
-                composite *= cfg[weight_multiplier]
+                composite *= cfg["weight_multiplier"]
                 break  # apply highest-priority match (first match)
 
     return {
@@ -727,12 +727,16 @@ def generate_recommendations(predictions: list[dict],
         ticker  = pos["ticker"]
         pnl_pct = pos["unrealized_pct"]
 
-        if pnl_pct >= CONFIG["profit_tiers"][0][0] * 100:
+        tiers_triggered = pos.get("tiers_triggered", 0)
+        profit_tiers = CONFIG["profit_tiers"]
+        next_tier_idx = min(tiers_triggered, len(profit_tiers) - 1)
+        next_tier_pct = profit_tiers[next_tier_idx][0] * 100
+        if pnl_pct >= next_tier_pct and tiers_triggered < len(profit_tiers):
             recommendations.append({
                 "ticker":  ticker,
                 "action":  "SELL",
                 "sector":  pos.get("sector", ""),
-                "rationale": f"Take profit: +{pnl_pct:.1f}% (target: +{CONFIG['profit_tiers'][0][0]*100:.0f}%)",
+                "rationale": f"Take profit: +{pnl_pct:.1f}% (target: +{next_tier_pct:.0f}%)",
                 "suggested_shares": pos["shares"],
                 "suggested_value":  pos["current_value"],
                 "exit_reason": "take_profit",
