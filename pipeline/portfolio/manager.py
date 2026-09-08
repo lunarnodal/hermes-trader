@@ -9,6 +9,7 @@ Respects PDT rules, position limits, sector concentration limits
 import json
 import logging
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
