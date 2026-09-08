@@ -51,10 +51,7 @@ def init_db() -> sqlite3.Connection:
 
 
 def seed_static_rules(conn: sqlite3.Connection) -> None:
-    """Seed the baseline static rules — only if not already seeded"""
-    existing = conn.execute("SELECT COUNT(*) FROM inference_rules WHERE source = 'static'").fetchone()[0]
-    if existing > 0:
-        return  # Already seeded
+    """Seed the baseline static rules — upserts per trigger so new rules land."""
     now = datetime.now(timezone.utc).isoformat()
     static_rules = [
         # Geopolitical
@@ -101,11 +98,18 @@ def seed_static_rules(conn: sqlite3.Connection) -> None:
          ["agriculture","consumer_staples"]),
     ]
 
-    existing = {row[0] for row in
-                conn.execute("SELECT trigger FROM inference_rules").fetchall()}
-
     for trigger, sectors in static_rules:
-        if trigger not in existing:
+        existing = conn.execute(
+            "SELECT id FROM inference_rules WHERE trigger = ?", (trigger,)
+        ).fetchone()
+
+        if existing:
+            conn.execute("""
+                UPDATE inference_rules
+                SET sectors = ?, confidence = ?, updated_at = ?, source = 'static'
+                WHERE trigger = ?
+            """, (json.dumps(sectors), 0.9, now, trigger))
+        else:
             conn.execute("""
                 INSERT INTO inference_rules
                 (trigger, sectors, confidence, source, created_at, updated_at)

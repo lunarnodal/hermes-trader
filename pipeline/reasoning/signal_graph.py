@@ -195,6 +195,11 @@ STATIC_DEPENDENCIES = {
         ("financials",  "bullish", "M&A activity signals market confidence"),
         ("technology",  "bullish", "consolidation can boost valuations"),
     ],
+    "merger_arbitrage": [
+        ("financials", "bullish", "arbitrage activity signals M&A market confidence"),
+        ("energy",     "bullish", "high arb spread > 15% triggers energy sector move"),
+        ("commodities","bullish", "deal uncertainty flows into commodity markets"),
+    ],
 
     # Jobs / consumer
     "jobs_strong": [

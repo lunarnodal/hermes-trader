@@ -86,6 +86,11 @@ EVENT_TYPE_CONFIG = {
         min_confidence: 0.70,
         weight_multiplier: 1.15,
     },
+    merger_arbitrage: {
+        min_signals: 1,
+        min_confidence: 0.60,
+        weight_multiplier: 1.20,
+    },
 }
 
 
