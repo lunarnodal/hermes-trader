@@ -777,11 +777,14 @@ function renderThetaCard(theta) {
       const dte = Math.max(0, Math.ceil((new Date(p.expiry)-new Date())/86400000));
       const dteColor = dte<=5?'#EF4444':dte<=14?'#e3b341':'#10B981';
       const riskColor = p.assignment_risk?'#EF4444':'#8b949e';
+      const fillColor = p.fill_status==='filled'?'#10B981':p.fill_status==='pending'?'#f59e0b':'#8b949e';
+      const fillLabel = p.fill_status==='filled'?'●':p.fill_status==='pending'?'⏳':'?';
+      const underlyingStr = p.underlying_price ? ' @ $'+p.underlying_price.toFixed(2) : '';
       return '<tr style="border-bottom:1px solid #161b22">'+
-        '<td style="padding:3px 4px;font-weight:600">'+p.ticker+'</td>'+
+        '<td style="padding:3px 4px;font-weight:600"><span style="color:'+fillColor+'" title="'+p.fill_status+'">'+fillLabel+'</span> '+p.ticker+'</td>'+
         '<td style="padding:3px 4px;color:#8b949e">'+(p.instrument_type==='covered_call'?'CC':'CSP')+'</td>'+
-        '<td style="text-align:right;padding:3px 4px">$'+p.strike.toFixed(0)+'</td>'+
-        '<td style="text-align:right;padding:3px 4px;color:'+dteColor+'">'+dte+'</td>'+
+        '<td style="text-align:right;padding:3px 4px">$'+p.strike.toFixed(0)+'<span style="font-size:10px;color:#8b949e">'+underlyingStr+'</span></td>'+
+        '<td style="text-align:right;padding:3px 4px;color:'+dteColor+'">'+dte+'d</td>'+
         '<td style="text-align:right;padding:3px 4px;color:'+riskColor+'">'+fmtPrem(p.premium)+'</td>'+
         '</tr>';
     }).join('');
@@ -1267,12 +1270,35 @@ def api_data():
                 dte = 0
             # Assignment risk: underlying within 5% of strike
             assignment_risk = False
+            fill_status = "unknown"
+            current_price = None
             try:
                 from alpaca_feed.data import get_live_prices
                 prices = get_live_prices([ticker])
-                current = prices.get(ticker)
-                if current and instrument_type == "cash_secured_put":
-                    assignment_risk = current <= strike * 1.05
+                current_price = prices.get(ticker)
+                if current_price and instrument_type == "cash_secured_put":
+                    assignment_risk = current_price <= strike * 1.05
+            except Exception:
+                pass
+            # Check fill status from Alpaca if option_symbol available
+            try:
+                if option_symbol:
+                    from alpaca_feed.trading import get_trading_client
+                    _tc = get_trading_client()
+                    _orders = _tc.get_orders()
+                    for _o in _orders:
+                        if str(_o.symbol) == option_symbol:
+                            _status = str(_o.status)
+                            if "filled" in _status:
+                                fill_status = "filled"
+                            elif "new" in _status or "pending" in _status:
+                                fill_status = "pending"
+                            elif "cancelled" in _status or "expired" in _status:
+                                fill_status = "cancelled"
+                            break
+                    else:
+                        # Not in open orders — must be filled or never placed
+                        fill_status = "filled"
             except Exception:
                 pass
             theta_positions.append({
@@ -1285,6 +1311,8 @@ def api_data():
                 "premium":         round(premium * 100, 2),  # per contract
                 "option_symbol":   option_symbol or "",
                 "assignment_risk": assignment_risk,
+                "fill_status":     fill_status,
+                "underlying_price": current_price,
             })
 
         total_premium = sum(p["premium"] for p in theta_positions)
