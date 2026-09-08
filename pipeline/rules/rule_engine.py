@@ -91,6 +91,9 @@ def seed_static_rules(conn: sqlite3.Connection) -> None:
          ["manufacturing","technology","retail"]),
         ("cybersecurity attack breach",
          ["technology","cybersecurity","financials"]),
+        # Merger arbitrage
+        ("merger arbitrage risk arb spread deal arbitrage takeover spread",
+         ["energy","financials","commodities"]),
         # Agriculture/Weather
         ("drought flood weather",
          ["agriculture","insurance","utilities"]),

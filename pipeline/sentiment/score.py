@@ -70,7 +70,7 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
@@ -87,6 +87,8 @@ Required fields:
       - leadership_transition without stock phrase -> leadership_transition (not sec_filing)
       - investigations/insider trading probes -> regulatory (not sec_filing)
       - tax-driven sales without Form 4 context -> other
+  merger_arbitrage: merger arbitrage, risk arbitrage, arb spread, spread analysis, deal spread, deal arbitrage, deal hunters, M&A spread, takeover spread, merger play — always tag "energy", "financials", "commodities"; trigger energy sector when arb_spread > 15%
+  merger_acquisition: mergers, acquisitions, M&A, buyout, takeover, acquisition of [company]
 - macro_themes: array of applicable themes (pick all that apply, or []): {_theme_sample}. If the article covers a genuinely novel theme not in this list, you may add new snake_case theme names prefixed with "new:" e.g. "new:space_economy"
 - summary: max 2 sentence plain English summary of market impact
 
@@ -106,7 +108,7 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
