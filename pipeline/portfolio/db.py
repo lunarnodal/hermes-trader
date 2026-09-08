@@ -672,16 +672,17 @@ def open_theta_position(conn: sqlite3.Connection,
                         strike: float,
                         expiry: str,
                         premium_collected: float,
-                        notes: str = "") -> int:
+                        notes: str = "",
+                        option_symbol: str = "") -> int:
     """Open a theta-gang position (covered call or cash-secured put)"""
     now = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute("""
         INSERT INTO theta_positions
         (ticker, sector, instrument_type, strike, expiry,
-         premium_collected, entry_date, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         premium_collected, entry_date, notes, option_symbol)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (ticker, sector, instrument_type, strike, expiry,
-          premium_collected, now, notes))
+          premium_collected, now, notes, option_symbol))
     position_id = cursor.lastrowid
     log.info(f"THETA OPENED: {instrument_type} {ticker} strike=${strike:.2f} "
              f"expiry={expiry} premium=${premium_collected:.2f}")

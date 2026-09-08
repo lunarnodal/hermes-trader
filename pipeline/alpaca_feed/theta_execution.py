@@ -387,6 +387,7 @@ def execute_theta_recommendation(rec: dict, conn) -> dict | None:
         strike=contract["strike"],
         expiry=contract["expiry"],
         premium_collected=contract["mid_price"],
+        option_symbol=contract["option_symbol"],
         notes=(f"delta={contract['delta']:.2f} dte={contract['dte']} "
                f"order_id={result['order_id']}")
     )
