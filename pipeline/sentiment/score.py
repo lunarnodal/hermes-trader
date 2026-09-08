@@ -192,7 +192,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
         "model":  LLAMA_MODEL,
         "stream": False,
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system",  "content": get_system_prompt()},
