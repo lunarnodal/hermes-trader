@@ -193,7 +193,7 @@ def run_daily_predictions() -> None:
                     log.error(f"   {q['label']} failed after 3 attempts: {e}")
     # Daily summary
     log.info("═══ Daily predictions complete ═══")
-    log.info(f"    Generated {len(results)}/{len(DAILY_QUERIES)} predictions")
+    log.info(f"    Generated {len(results)}/{len(daily_queries)} predictions")
     for r in results:
         log.info(f"    {r['label']:20s}: {r['direction']:7s} "
                  f"{r['probability']:.0%} conf={r['confidence']:.2f}")

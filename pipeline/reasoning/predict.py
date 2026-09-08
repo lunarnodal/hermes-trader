@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-DeepSeek-R1-70B direct reasoning engine
+Qwen3.6-27B direct reasoning engine
 Queries Qdrant for relevant signals and produces structured predictions
-Bypasses Hermes tool limitation — calls DeepSeek directly
+Bypasses Hermes tool limitation — calls Qwen3.6-27B directly
 """
 
 import json
@@ -203,7 +203,7 @@ def query_qdrant(query: str, limit: int = 15,
 
 
 def format_signals_for_reasoning(signals: list[dict]) -> str:
-    """Format signals into structured context for DeepSeek"""
+    """Format signals into structured context for Qwen3.6-27B"""
     lines = [f"SIGNAL DATA ({len(signals)} signals):", ""]
 
     bull = [s for s in signals if s["sentiment"] == "bullish"]
@@ -342,8 +342,8 @@ Timeframe: {timeframe}
 
 Based on these signals, provide your reasoning and prediction."""
 
-    # Call DeepSeek on Spark
-    log.info("Calling DeepSeek-R1-70B for reasoning...")
+    # Call Qwen3.6-27B for reasoning
+    log.info("Calling Qwen3.6-27B for reasoning...")
 # BEFORE
 #    resp = requests.post(
 #        f"{SPARK_OLLAMA}/api/chat",
