@@ -795,7 +795,7 @@ function renderThetaCard(theta) {
       '<th style="text-align:right;padding:3px 4px">Premium</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
-  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.organic && theta.organic.positions, 'Organic') + posRows(theta.hackathon && theta.hackathon.positions, 'Hackathon');
+  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.positions, 'Open Positions');
 }
 // Drag and drop
 let dragSrc = null;
@@ -1242,27 +1242,63 @@ def api_data():
         data['cash_yield'] = {}
 
 
-    # Theta gang — short options positions
+    # Theta gang — pull from pipeline DB (source of truth)
     try:
-        from alpaca_feed.trading import get_theta_positions
-        theta_raw = get_theta_positions()
-        # Separate organic vs hackathon accounts by ticker conventions
-        organic_tickers = {'AAPL','MSFT','NVDA','GOOGL','AMZN','META','TSLA','AMD','INTC','QCOM'}
-        organic_pos = [p for p in theta_raw if p["ticker"] in organic_tickers]
-        hackathon_pos = [p for p in theta_raw if p["ticker"] not in organic_tickers]
-        total_premium = sum(p["premium"] for p in theta_raw)
-        assignment_risk_count = sum(1 for p in theta_raw if p["assignment_risk"])
+        import sqlite3 as _sql
+        from datetime import datetime as _dt, timezone as _tz
+        from portfolio.db import DB_PATH as _PORTFOLIO_DB_PATH
+        _db_conn = _sql.connect(str(_PORTFOLIO_DB_PATH))
+        _rows = _db_conn.execute("""
+            SELECT ticker, sector, instrument_type, strike, expiry,
+                   premium_collected, entry_date, option_symbol
+            FROM theta_positions
+            WHERE status = 'open'
+            ORDER BY entry_date DESC
+        """).fetchall()
+        _db_conn.close()
+
+        theta_positions = []
+        for r in _rows:
+            ticker, sector, instrument_type, strike, expiry,                 premium, entry_date, option_symbol = r
+            try:
+                expiry_dt = _dt.strptime(expiry, "%Y-%m-%d").replace(tzinfo=_tz.utc)
+                dte = max(0, (expiry_dt - _dt.now(_tz.utc)).days)
+            except Exception:
+                dte = 0
+            # Assignment risk: underlying within 5% of strike
+            assignment_risk = False
+            try:
+                from alpaca_feed.data import get_live_prices
+                prices = get_live_prices([ticker])
+                current = prices.get(ticker)
+                if current and instrument_type == "cash_secured_put":
+                    assignment_risk = current <= strike * 1.05
+            except Exception:
+                pass
+            theta_positions.append({
+                "ticker":          ticker,
+                "sector":          sector or "",
+                "instrument_type": instrument_type,
+                "strike":          strike,
+                "expiry":          expiry,
+                "dte":             dte,
+                "premium":         round(premium * 100, 2),  # per contract
+                "option_symbol":   option_symbol or "",
+                "assignment_risk": assignment_risk,
+            })
+
+        total_premium = sum(p["premium"] for p in theta_positions)
+        assignment_risk_count = sum(1 for p in theta_positions if p["assignment_risk"])
         data["theta"] = {
-            "organic": {"positions": organic_pos, "count": len(organic_pos)},
-            "hackathon": {"positions": hackathon_pos, "count": len(hackathon_pos)},
+            "positions": theta_positions,
             "aggregate": {
-                "total_premium": round(total_premium, 2),
+                "total_premium":         round(total_premium, 2),
                 "assignment_risk_count": assignment_risk_count,
-                "total_count": len(theta_raw),
+                "total_count":           len(theta_positions),
             }
         }
     except Exception as e:
-        log.warning(f"Theta positions unavailable: {e}")
+        import logging as _logging; _logging.getLogger(__name__).warning(f"Theta positions unavailable: {e}")
         data["theta"] = {}
 
     return jsonify(data)
