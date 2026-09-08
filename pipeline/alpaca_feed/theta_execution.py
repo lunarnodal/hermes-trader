@@ -28,31 +28,22 @@ def place_sell_to_open(option_symbol: str,
                         qty: int,
                         reason: str = "") -> dict:
     """
-    Place a sell-to-open order for a short options position.
-    Used for both covered calls and cash-secured puts.
-
-    Args:
-        option_symbol: OCC format option symbol (e.g. AAPL240119P00150000)
-        qty:           number of contracts (positive integer)
-        reason:        logging context
-
-    Returns:
-        dict with order result
+    Place a sell-to-open limit order for a short options position.
+    Uses LimitOrderRequest with the OCC option symbol directly.
     """
     try:
-        from alpaca.trading.requests import OptionLimitOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
-
-        client = _get_trading_client()
-
-        # Get current mid price for limit order
+        from alpaca.trading.requests import LimitOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.data.historical import OptionHistoricalDataClient
         from alpaca.data.requests import OptionLatestQuoteRequest
+
+        client = _get_trading_client()
         data_client = OptionHistoricalDataClient(
             os.getenv("ALPACA_API_KEY", ""),
             os.getenv("ALPACA_SECRET_KEY", "")
         )
 
+        # Get current quote for limit price
         quote_req = OptionLatestQuoteRequest(symbol_or_symbols=option_symbol)
         quotes = data_client.get_option_latest_quote(quote_req)
 
@@ -66,14 +57,13 @@ def place_sell_to_open(option_symbol: str,
         if bid <= 0:
             return {"success": False, "error": "No bid price — illiquid"}
 
-        # Use mid price for limit order (natural fill point)
+        # Use mid price for limit order
         mid = round((bid + ask) / 2, 2)
 
-        req = OptionLimitOrderRequest(
+        req = LimitOrderRequest(
             symbol        = option_symbol,
             qty           = qty,
             side          = OrderSide.SELL,
-            type          = "limit",
             limit_price   = mid,
             time_in_force = TimeInForce.DAY,
         )
@@ -112,7 +102,7 @@ def place_buy_to_close(option_symbol: str,
     Used for profit-taking (50% close) or defensive close.
     """
     try:
-        from alpaca.trading.requests import OptionLimitOrderRequest
+        from alpaca.trading.requests import LimitOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
         from alpaca.data.historical import OptionHistoricalDataClient
         from alpaca.data.requests import OptionLatestQuoteRequest
@@ -138,11 +128,10 @@ def place_buy_to_close(option_symbol: str,
         # Use ask + small buffer to ensure fill on close
         limit_price = round(ask * 1.02, 2)
 
-        req = OptionLimitOrderRequest(
+        req = LimitOrderRequest(
             symbol        = option_symbol,
             qty           = qty,
             side          = OrderSide.BUY,
-            type          = "limit",
             limit_price   = limit_price,
             time_in_force = TimeInForce.DAY,
         )
@@ -308,7 +297,7 @@ def execute_theta_recommendation(rec: dict, conn) -> dict | None:
       4. Place sell-to-open order
       5. Record in theta_positions DB
     """
-    from theta_strike_selector import (
+    from alpaca_feed.theta_strike_selector import (
         select_csp_contract, select_covered_call_contract, check_earnings_veto
     )
     from portfolio.db import open_theta_position
@@ -341,13 +330,13 @@ def execute_theta_recommendation(rec: dict, conn) -> dict | None:
     if instrument == "THETA_CSP":
         cash_required = contract["cash_required"]
         available_cash = conn.execute(
-            "SELECT cash FROM cash_ledger ORDER BY id DESC LIMIT 1"
+            "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
         ).fetchone()
         available = float(available_cash[0]) if available_cash else 0
 
         # Reserve max 20% of portfolio per theta position
         port_val = conn.execute(
-            "SELECT portfolio_value FROM portfolio_snapshots ORDER BY id DESC LIMIT 1"
+            "SELECT total_value FROM portfolio_snapshots ORDER BY id DESC LIMIT 1"
         ).fetchone()
         port = float(port_val[0]) if port_val else 100000
         max_theta_cash = port * 0.20

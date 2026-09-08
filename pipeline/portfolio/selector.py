@@ -661,7 +661,7 @@ def generate_recommendations(predictions: list[dict],
 
             # ── Theta-gang eligibility gate ──────────────────────────────────
             from .db import THETA_CONFIG
-            from pipeline.reasoning.predict import compute_theta_eligibility_score as _theta_score
+            from reasoning.predict import compute_theta_eligibility_score as _theta_score
             # Fetch real IV rank and market data for theta scoring
             try:
                 from alpaca_feed.theta_iv_rank import get_sector_market_data as _get_iv
@@ -697,21 +697,24 @@ def generate_recommendations(predictions: list[dict],
                          f"assign={theta_breakdown['assignment_component']:.3f} "
                          f"liq={theta_breakdown['liquidity_component']:.3f})")
 
-                # ── Emit theta-gang instrument variant (additive to equity signal) ──
-                cash_required = 100 * stock["current_price"] * 1.0  # margin buffer per contract
+                # ── Emit theta-gang CSP on sector ETF (more liquid than individual stocks) ──
+                from alpaca_feed.theta_iv_rank import SECTOR_ETFS as _SECTOR_ETFS
+                theta_ticker = _SECTOR_ETFS.get(sector, ticker)
+                theta_price  = stats.get("underlying_price", stock["current_price"])
+                cash_required = theta_price * 100  # 1 contract cash requirement (approx)
                 if cash >= cash_required:
                     recommendations.append({
-                        "ticker":           ticker,
+                        "ticker":           theta_ticker,
                         "action":           "BUY",
-                        "instrument":       "THETA_CC" if direction == "bullish" else "THETA_CSP",
+                        "instrument":       "THETA_CSP",
                         "theta_score":      theta_score,
                         "theta_breakdown":  theta_breakdown,
                         "cash_required":    cash_required,
-                        "rationale":        f"[THETA] {ticker} theta-gang eligible ── " + stock["rationale"][:80],
+                        "rationale":        f"[THETA] {theta_ticker} CSP — {sector} eligible score={theta_score:.2f}",
                         "sector":           sector,
                         "signal_count":     stock["signal_count"],
                         "avg_confidence":   stock["avg_conf"],
-                        "current_price":    stock["current_price"],
+                        "current_price":    theta_price,
                     })
 
             # Skip equity entry if below confidence threshold (theta-only mode)

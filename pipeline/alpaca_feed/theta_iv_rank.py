@@ -23,16 +23,17 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 SECTOR_ETFS = {
-    "technology":     "XLK",
-    "energy":         "XLE",
-    "healthcare":     "XLV",
-    "financials":     "XLF",
-    "industrials":    "XLI",
-    "consumer":       "XLY",
-    "materials":      "XLB",
-    "macro":          "SPY",
-    "defense":        "XAR",
-    "market_overview":"SPY",
+    "technology":       "XLK",
+    "ai_infrastructure":"XLK",  # AI infra is a tech subsector
+    "energy":           "XLE",
+    "healthcare":       "XLV",
+    "financials":       "XLF",
+    "industrials":      "XLI",
+    "consumer":         "XLY",
+    "materials":        "XLB",
+    "macro":            "SPY",
+    "defense":          "XAR",
+    "market_overview":  "SPY",
 }
 
 _iv_cache: dict = {}
