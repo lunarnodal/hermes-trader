@@ -326,9 +326,17 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
                         conn, pos["id"], current_price,
                         fraction, reason, new_stop
                     )
+                    # Update tiers_triggered and advance take_profit to next tier target
+                    next_tier_idx = tier_idx + 1
+                    next_tiers = CONFIG["profit_tiers"]
+                    if next_tier_idx < len(next_tiers):
+                        next_gain = next_tiers[next_tier_idx][0]
+                        next_take_profit = round(pos["entry_price"] * (1 + next_gain), 2)
+                    else:
+                        next_take_profit = pos.get("take_profit", 0)  # keep current if no more tiers
                     conn.execute(
-                        "UPDATE positions SET tiers_triggered = ? WHERE id = ?",
-                        (tier_idx + 1, pos["id"])
+                        "UPDATE positions SET tiers_triggered = ?, take_profit = ? WHERE id = ?",
+                        (next_tier_idx, next_take_profit, pos["id"])
                     )
                     _alpaca_mirror("PARTIAL_SELL", ticker,
                                    round(pos["shares"] * fraction, 0), reason)
