@@ -163,7 +163,6 @@ NOISE_PATTERNS = [
     "form 10q",
     "form 10k",
     "form 8-k",
-    "form 4 ",
     "for: 14 may",
     "for: 15 may",
     "for: 16 may",

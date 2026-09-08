@@ -70,7 +70,7 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
@@ -106,7 +106,7 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
 - sectors: array of ALL affected sectors including INDIRECT impacts — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
