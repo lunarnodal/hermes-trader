@@ -652,6 +652,14 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
                     exits += theta_exits
             except Exception as _te:
                 log.warning(f"[THETA] Exit check failed: {_te}")
+            # Cancel expired unfilled theta positions and confirm fills
+            try:
+                from portfolio.db import cancel_expired_theta_positions
+                n_cancelled = cancel_expired_theta_positions(conn)
+                if n_cancelled:
+                    log.info(f"[THETA] {n_cancelled} expired position(s) cancelled")
+            except Exception as _te:
+                log.warning(f"[THETA] Expired position cleanup failed: {_te}")
         # Check theta-gang positions for exit conditions
         if not dry_run:
             try:
@@ -662,6 +670,14 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
                     exits += theta_exits
             except Exception as _te:
                 log.warning(f"[THETA] Exit check failed: {_te}")
+            # Cancel expired unfilled theta positions and confirm fills
+            try:
+                from portfolio.db import cancel_expired_theta_positions
+                n_cancelled = cancel_expired_theta_positions(conn)
+                if n_cancelled:
+                    log.info(f"[THETA] {n_cancelled} expired position(s) cancelled")
+            except Exception as _te:
+                log.warning(f"[THETA] Expired position cleanup failed: {_te}")
         results["exits"] = exits
         if exits:
             log.info(f"Exit actions: {len(exits)}")

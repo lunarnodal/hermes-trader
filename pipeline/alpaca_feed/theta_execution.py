@@ -259,7 +259,7 @@ def check_theta_exits(conn) -> list[dict]:
                 )
 
                 if btc_result.get("success"):
-                    from portfolio.db import close_theta_position
+                    from portfolio.db import close_theta_position, release_cash_for_put
                     event_type = "profit_close"
                     if "assignment_risk" in close_reason:
                         event_type = "defensive_close"
@@ -270,6 +270,12 @@ def check_theta_exits(conn) -> list[dict]:
                         conn, pos_id, event_type,
                         exit_price=close_cost,
                         notes=close_reason
+                    )
+                    # Release reserved cash back to available balance
+                    release_cash_for_put(
+                        conn, ticker, strike,
+                        premium_collected=premium_collected,
+                        notes=f"closed: {close_reason}"
                     )
                     exits.append({
                         "ticker":    ticker,

@@ -751,6 +751,143 @@ def close_theta_position(conn: sqlite3.Connection,
     }
 
 
+def reserve_cash_for_put(conn, ticker: str, strike: float,
+                          option_symbol: str = "", notes: str = "") -> None:
+    """
+    Reserve cash for a cash-secured put position.
+    Deducts strike * 100 from available cash balance.
+    Called after confirmed fill of STO order.
+    """
+    reserved = round(strike * 100, 2)
+    now = datetime.now(timezone.utc).isoformat()
+    last = conn.execute(
+        "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    current_balance = float(last[0]) if last else 0.0
+    new_balance = round(current_balance - reserved, 2)
+    conn.execute("""
+        INSERT INTO cash_ledger (timestamp, amount, balance, description)
+        VALUES (?, ?, ?, ?)
+    """, (now, -reserved, new_balance,
+          f"THETA RESERVE: CSP {ticker} strike=${strike:.2f} {option_symbol}"))
+    conn.commit()
+    log.info(f"[THETA] Cash reserved: ${reserved:.2f} for {ticker} CSP "
+             f"(balance ${current_balance:.2f} → ${new_balance:.2f})")
+
+
+def release_cash_for_put(conn, ticker: str, strike: float,
+                          premium_collected: float = 0,
+                          notes: str = "") -> None:
+    """
+    Release reserved cash when CSP closes (profit close, expired, or assigned).
+    Returns strike * 100 to available cash, minus any assignment cost.
+    """
+    reserved = round(strike * 100, 2)
+    now = datetime.now(timezone.utc).isoformat()
+    last = conn.execute(
+        "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    current_balance = float(last[0]) if last else 0.0
+    new_balance = round(current_balance + reserved, 2)
+    conn.execute("""
+        INSERT INTO cash_ledger (timestamp, amount, balance, description)
+        VALUES (?, ?, ?, ?)
+    """, (now, reserved, new_balance,
+          f"THETA RELEASE: CSP {ticker} strike=${strike:.2f} {notes}"))
+    conn.commit()
+    log.info(f"[THETA] Cash released: ${reserved:.2f} for {ticker} CSP "
+             f"(balance ${current_balance:.2f} → ${new_balance:.2f})")
+
+
+def cancel_expired_theta_positions(conn) -> int:
+    """
+    Mark theta positions as cancelled if their DAY order expired unfilled.
+    Called during portfolio cycle. Returns count of cancelled positions.
+    """
+    import os
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent.parent / ".env")
+
+        client = TradingClient(
+            os.getenv("ALPACA_API_KEY", ""),
+            os.getenv("ALPACA_SECRET_KEY", ""),
+            paper=True
+        )
+
+        # Get open theta positions that haven't been confirmed filled
+        rows = conn.execute("""
+            SELECT id, ticker, strike, option_symbol, premium_collected
+            FROM theta_positions
+            WHERE status = 'open'
+            AND notes NOT LIKE '%confirmed_fill%'
+        """).fetchall()
+
+        if not rows:
+            return 0
+
+        # Get closed orders to check for expired/cancelled
+        closed_orders = client.get_orders(
+            GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=50)
+        )
+        closed_by_symbol = {str(o.symbol): o for o in closed_orders}
+
+        # Get open orders to check pending
+        open_orders = client.get_orders(
+            GetOrdersRequest(status=QueryOrderStatus.OPEN)
+        )
+        open_symbols = {str(o.symbol) for o in open_orders}
+
+        cancelled = 0
+        now = datetime.now(timezone.utc).isoformat()
+
+        for pos_id, ticker, strike, option_symbol, premium in rows:
+            if not option_symbol:
+                continue
+
+            if option_symbol in open_symbols:
+                # Still pending — leave it
+                continue
+
+            if option_symbol in closed_by_symbol:
+                order = closed_by_symbol[option_symbol]
+                status = str(order.status).lower()
+
+                if "filled" in status and float(order.filled_qty or 0) > 0:
+                    # Confirmed fill — reserve cash and mark confirmed
+                    reserve_cash_for_put(conn, ticker, strike, option_symbol,
+                                         "confirmed fill")
+                    conn.execute("""
+                        UPDATE theta_positions
+                        SET notes = notes || ' | confirmed_fill'
+                        WHERE id = ?
+                    """, (pos_id,))
+                    conn.commit()
+                    log.info(f"[THETA] Confirmed fill: {option_symbol} — cash reserved")
+
+                elif "expired" in status or "cancelled" in status:
+                    # Order expired unfilled — cancel the DB position
+                    conn.execute("""
+                        UPDATE theta_positions
+                        SET status = 'cancelled',
+                            exit_date = ?,
+                            notes = notes || ' | order_expired_unfilled'
+                        WHERE id = ?
+                    """, (now, pos_id))
+                    conn.commit()
+                    cancelled += 1
+                    log.info(f"[THETA] Position cancelled (order expired): {option_symbol}")
+
+        return cancelled
+
+    except Exception as e:
+        log.warning(f"[THETA] Cancel expired positions failed: {e}")
+        return 0
+
+
 def get_theta_history(conn: sqlite3.Connection, sector: str) -> list[dict]:
     """Get all theta positions for a sector, ordered by entry date desc"""
     rows = conn.execute("""
