@@ -160,8 +160,13 @@ Example with cross-sector inference:
 
 def build_prompt(article: dict) -> str:
     title   = article.get("title", "")
-    summary = article.get("summary", "")
     source  = article.get("source", "")
+    # Cap summary at 800 chars at sentence boundary — preserves lead paragraph
+    # which has highest signal density. Avoids context overflow on long articles.
+    summary = (article.get("summary", "") or "")
+    if len(summary) > 800:
+        cut = summary[:800].rfind('. ')
+        summary = summary[:cut + 1] if cut > 400 else summary[:800]
     return f"Source: {source}\nHeadline: {title}\nSummary: {summary}"
 
 
