@@ -21,6 +21,8 @@ import json
 import os
 import logging
 import sys
+import threading
+from functools import wraps
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -42,8 +44,101 @@ PAPER_DB     = Path("/home/trading/trading-ai/data/paper_trading.db")
 PORTFOLIO_DB = Path("/home/trading/trading-ai/data/portfolio.db")
 RULES_DB     = Path("/home/trading/trading-ai/data/rules.db")
 LESSONS_DB   = Path("/home/trading/trading-ai/data/lessons.db")
+INSTRUMENT_DB  = Path("/home/trading/trading-ai/data/trading_pipeline.db")
 
 
+
+
+# ---------------------------------------------------------------------------
+# MCP Call Tracking — append-only log, non-blocking background thread
+# ---------------------------------------------------------------------------
+
+_CALL_LOG_LOCK = threading.Lock()
+_INIT_DONE = False
+
+
+def _init_call_log():
+    global _INIT_DONE
+    if _INIT_DONE:
+        return
+    with _CALL_LOG_LOCK:
+        if _INIT_DONE:
+            return
+        try:
+            conn = sqlite3.connect(str(INSTRUMENT_DB))
+            conn.execute("CREATE TABLE IF NOT EXISTS mcp_call_log ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "timestamp TEXT NOT NULL,"
+                "tool_name TEXT NOT NULL,"
+                "toolset TEXT NOT NULL DEFAULT 'trading_pipeline',"
+                "task_id TEXT,"
+                "caller_context TEXT,"
+                "duration_ms REAL,"
+                "status TEXT NOT NULL DEFAULT 'success',"
+                "error_message TEXT,"
+                "result_length INTEGER)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_call_tool ON mcp_call_log(tool_name)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_call_ts ON mcp_call_log(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mcp_call_task ON mcp_call_log(task_id)")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.error("Failed to init call log table: %s", e)
+        _INIT_DONE = True
+
+
+def _log_call_async(tool_name, toolset, task_id, caller_context,
+                    duration_ms, status, error_message, result_length):
+    def _insert():
+        try:
+            conn = sqlite3.connect(str(INSTRUMENT_DB))
+            conn.execute("INSERT INTO mcp_call_log"
+                "(timestamp, tool_name, toolset, task_id,"
+                "caller_context, duration_ms, status,"
+                "error_message, result_length)"
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (datetime.now(timezone.utc).isoformat(),
+                 tool_name, toolset, task_id,
+                 caller_context, duration_ms, status,
+                 error_message, result_length))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.error("Call log write failed (non-blocking): %s", e)
+    threading.Thread(target=_insert, daemon=True).start()
+
+
+def instrumented_tool(toolset_name="trading_pipeline"):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            t0 = datetime.now(timezone.utc)
+            task_id = kwargs.get("task_id") or os.environ.get("HERMES_KANBAN_TASK", "")
+            caller_context = kwargs.get("caller_context") or os.environ.get("HERMES_CALLER_CONTEXT", "")
+            kwargs.pop("task_id", None)
+            kwargs.pop("caller_context", None)
+            try:
+                result = fn(*args, **kwargs)
+                elapsed = (datetime.now(timezone.utc) - t0).total_seconds() * 1000
+                result_len = len(result) if isinstance(result, str) else None
+                _log_call_async(fn.__name__, toolset_name, task_id, caller_context,
+                                round(elapsed, 1), "success", None, result_len)
+                return result
+            except Exception as e:
+                elapsed = (datetime.now(timezone.utc) - t0).total_seconds() * 1000
+                _log_call_async(fn.__name__, toolset_name, task_id, caller_context,
+                                round(elapsed, 1), "error", str(e), None)
+                raise
+        return wrapper
+    return decorator
+
+
+# Initialize the log table on import
+_init_call_log()
+
+@instrumented_tool()
+@instrumented_tool()
 @mcp.tool()
 def get_daily_predictions() -> str:
     """
@@ -88,6 +183,7 @@ def get_daily_predictions() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_sector_calibration() -> str:
     """
@@ -141,6 +237,7 @@ def get_sector_calibration() -> str:
     return json.dumps({"sector_calibration": calibration}, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_portfolio_state() -> str:
     """
@@ -194,6 +291,7 @@ def get_portfolio_state() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_sector_breakers() -> str:
     """
@@ -233,6 +331,7 @@ def get_sector_breakers() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_recent_signals(sector: str = "", limit: int = 5) -> str:
     """
@@ -297,6 +396,7 @@ def get_recent_signals(sector: str = "", limit: int = 5) -> str:
         return json.dumps({"error": str(e)})
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_active_rules(limit: int = 10) -> str:
     """
@@ -321,6 +421,7 @@ def get_active_rules(limit: int = 10) -> str:
     return json.dumps({"total_rules": total, "top_rules": rules}, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_critic_verdicts(days: int = 3) -> str:
     """
@@ -364,6 +465,7 @@ def get_critic_verdicts(days: int = 3) -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
     """
@@ -561,6 +663,7 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
     """
@@ -620,6 +723,7 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_latest_weekly_report() -> str:
     """
@@ -643,6 +747,7 @@ def get_latest_weekly_report() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_latest_monthly_report() -> str:
     """
@@ -667,6 +772,7 @@ def get_latest_monthly_report() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_trade_history(days: int = 30) -> str:
     """
@@ -716,6 +822,7 @@ def get_trade_history(days: int = 30) -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_organic_account_info() -> str:
     """
@@ -754,6 +861,7 @@ def get_organic_account_info() -> str:
         return json.dumps({"error": str(e)})
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_hackathon_account_info() -> str:
     """
@@ -792,6 +900,7 @@ def get_hackathon_account_info() -> str:
         return json.dumps({"error": str(e)})
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_signal_ledger(days: int = 7) -> str:
     """
@@ -839,6 +948,7 @@ def get_signal_ledger(days: int = 7) -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_idle_cash_analysis() -> str:
     """
@@ -896,6 +1006,7 @@ def get_idle_cash_analysis() -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_pipeline_health() -> str:
     """
@@ -970,6 +1081,7 @@ def get_pipeline_health() -> str:
     return json.dumps(result, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_prediction_accuracy(days: int = 7) -> str:
     """
@@ -1016,6 +1128,7 @@ def get_prediction_accuracy(days: int = 7) -> str:
     }, indent=2)
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_indirect_dependencies(limit: int = 30) -> str:
     """
@@ -1051,6 +1164,7 @@ def get_indirect_dependencies(limit: int = 30) -> str:
         return json.dumps({"error": str(e)})
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_signal_event_breakdown(days: int = 7) -> str:
     """
@@ -1101,6 +1215,7 @@ def get_signal_event_breakdown(days: int = 7) -> str:
         return json.dumps({"error": str(e)})
 
 
+@instrumented_tool()
 @mcp.tool()
 def get_sector_trim() -> str:
     """
