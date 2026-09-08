@@ -651,6 +651,13 @@ def generate_recommendations(predictions: list[dict],
             # ── Theta-gang eligibility gate ──────────────────────────────────
             from .db import THETA_CONFIG
             from pipeline.reasoning.predict import compute_theta_eligibility_score as _theta_score
+            # Fetch real IV rank and market data for theta scoring
+            try:
+                from alpaca_feed.theta_iv_rank import get_sector_market_data as _get_iv
+                stats = _get_iv(sector, conn)
+            except Exception as _ive:
+                log.debug(f"[THETA] IV fetch failed for {sector}: {_ive}")
+                stats = {}
 
             assignment_history_raw = {}
             if stats.get("sector_assignment_rate") is not None:

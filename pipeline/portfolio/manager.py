@@ -427,6 +427,26 @@ def execute_recommendations(conn, recommendations: list[dict],
     sector_exp = get_sector_exposure(conn)
 
     for rec in recommendations:
+        # ── Theta-gang instrument routing ────────────────────────────────────
+        if rec.get("instrument") in ("THETA_CSP", "THETA_CC"):
+            if not dry_run:
+                try:
+                    from alpaca_feed.theta_execution import execute_theta_recommendation
+                    theta_result = execute_theta_recommendation(rec, conn)
+                    if theta_result:
+                        executed.append({
+                            "action":    rec.get("instrument"),
+                            "ticker":    rec["ticker"],
+                            "sector":    rec.get("sector", ""),
+                            "theta":     theta_result,
+                        })
+                except Exception as _te:
+                    log.error(f"[THETA] Execution failed for {rec['ticker']}: {_te}")
+            else:
+                log.info(f"[DRY RUN] THETA {rec.get('instrument')} {rec['ticker']} "
+                         f"score={rec.get('theta_score', 0):.2f}")
+            continue
+
         if rec["action"] != "BUY":
             continue
 
@@ -622,6 +642,26 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     if is_market_hours() or dry_run:
         exits = check_stop_loss_take_profit(conn, dry_run)
         exits += check_time_exits(conn, dry_run)
+        # Check theta-gang positions for exit conditions
+        if not dry_run:
+            try:
+                from alpaca_feed.theta_execution import check_theta_exits
+                theta_exits = check_theta_exits(conn)
+                if theta_exits:
+                    log.info(f"[THETA] {len(theta_exits)} theta position(s) closed")
+                    exits += theta_exits
+            except Exception as _te:
+                log.warning(f"[THETA] Exit check failed: {_te}")
+        # Check theta-gang positions for exit conditions
+        if not dry_run:
+            try:
+                from alpaca_feed.theta_execution import check_theta_exits
+                theta_exits = check_theta_exits(conn)
+                if theta_exits:
+                    log.info(f"[THETA] {len(theta_exits)} theta position(s) closed")
+                    exits += theta_exits
+            except Exception as _te:
+                log.warning(f"[THETA] Exit check failed: {_te}")
         results["exits"] = exits
         if exits:
             log.info(f"Exit actions: {len(exits)}")
