@@ -777,8 +777,8 @@ function renderThetaCard(theta) {
       const dte = Math.max(0, Math.ceil((new Date(p.expiry)-new Date())/86400000));
       const dteColor = dte<=5?'#EF4444':dte<=14?'#e3b341':'#10B981';
       const riskColor = p.assignment_risk?'#EF4444':'#8b949e';
-      const fillColor = p.fill_status==='filled'?'#10B981':p.fill_status==='pending'?'#f59e0b':'#8b949e';
-      const fillLabel = p.fill_status==='filled'?'●':p.fill_status==='pending'?'⏳':'?';
+      const fillColor = p.fill_status==='filled'?'#10B981':p.fill_status==='pending'?'#f59e0b':p.fill_status==='expired'?'#EF4444':'#8b949e';
+      const fillLabel = p.fill_status==='filled'?'●':p.fill_status==='pending'?'⏳':p.fill_status==='expired'?'✕':'?';
       const underlyingStr = p.underlying_price ? ' @ $'+p.underlying_price.toFixed(2) : '';
       return '<tr style="border-bottom:1px solid #161b22">'+
         '<td style="padding:3px 4px;font-weight:600"><span style="color:'+fillColor+'" title="'+p.fill_status+'">'+fillLabel+'</span> '+p.ticker+'</td>'+
@@ -1288,17 +1288,34 @@ def api_data():
                     _orders = _tc.get_orders()
                     for _o in _orders:
                         if str(_o.symbol) == option_symbol:
-                            _status = str(_o.status)
+                            _status = str(_o.status).lower()
                             if "filled" in _status:
                                 fill_status = "filled"
-                            elif "new" in _status or "pending" in _status:
+                            elif "new" in _status or "pending" in _status or "accepted" in _status:
                                 fill_status = "pending"
                             elif "cancelled" in _status or "expired" in _status:
                                 fill_status = "cancelled"
                             break
                     else:
-                        # Not in open orders — must be filled or never placed
-                        fill_status = "filled"
+                        # Not in open orders — check closed orders for fill/expire
+                        try:
+                            from alpaca.trading.requests import GetOrdersRequest
+                            from alpaca.trading.enums import QueryOrderStatus
+                            _closed = _tc.get_orders(GetOrdersRequest(
+                                status=QueryOrderStatus.CLOSED, limit=20
+                            ))
+                            for _co in _closed:
+                                if str(_co.symbol) == option_symbol:
+                                    _cs = str(_co.status).lower()
+                                    if "filled" in _cs:
+                                        fill_status = "filled"
+                                    elif "expired" in _cs or "cancelled" in _cs:
+                                        fill_status = "expired"
+                                    break
+                            else:
+                                fill_status = "filled"  # assume filled if not found
+                        except Exception:
+                            fill_status = "unknown"
             except Exception:
                 pass
             theta_positions.append({
