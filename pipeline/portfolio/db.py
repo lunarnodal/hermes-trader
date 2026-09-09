@@ -884,6 +884,65 @@ def cancel_expired_theta_positions(conn) -> int:
                     cancelled += 1
                     log.info(f"[THETA] Position cancelled (order expired): {option_symbol}")
 
+            # Check for assignment — option closed but equity position appeared
+            # Assignment: short put assigned = forced to buy 100 shares
+            try:
+                alpaca_positions = {p.symbol: p for p in client.get_all_positions()}
+                # Check if underlying equity appeared unexpectedly
+                if ticker in alpaca_positions and instrument_type == "cash_secured_put":
+                    eq_pos = alpaca_positions[ticker]
+                    eq_qty = float(eq_pos.qty)
+                    # Check if we already have this as an open equity position
+                    existing = conn.execute("""
+                        SELECT id FROM positions
+                        WHERE ticker = ? AND status = 'open'
+                    """, (ticker,)).fetchone()
+                    if not existing and eq_qty >= 100:
+                        # Assignment detected — create equity position
+                        avg_cost = float(eq_pos.avg_entry_price)
+                        log.info(f"[THETA] ASSIGNMENT DETECTED: {ticker} "
+                                 f"{eq_qty:.0f} shares @ ${avg_cost:.2f}")
+                        # Close theta position as assigned
+                        conn.execute("""
+                            UPDATE theta_positions
+                            SET status = 'assigned',
+                                assignment_event = 'exercised',
+                                exit_date = ?,
+                                exit_price = 0.0,
+                                pnl = ?,
+                                notes = notes || ' | ASSIGNED'
+                            WHERE id = ?
+                        """, (now, premium * 100, pos_id))
+                        # Record assignment event
+                        conn.execute("""
+                            INSERT INTO theta_assignment_events
+                            (position_id, ticker, sector, strike, expiry,
+                             event_type, event_date, notes)
+                            VALUES (?, ?, ?, ?, ?, 'assignment', ?, ?)
+                        """, (pos_id, ticker, sector, strike, expiry,
+                              now, f"assigned {eq_qty:.0f} shares @ ${avg_cost:.2f}"))
+                        # Release reserved cash (it was spent on shares)
+                        release_cash_for_put(conn, ticker, strike,
+                                             notes="assignment — cash spent on shares")
+                        # Create equity position in portfolio DB
+                        cost_basis = round(avg_cost * eq_qty, 2)
+                        conn.execute("""
+                            INSERT INTO positions
+                            (ticker, sector, shares, entry_price, entry_date,
+                             current_price, stop_loss, cost_basis, status, notes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                        """, (ticker, sector, eq_qty, avg_cost, now,
+                              avg_cost,
+                              round(avg_cost * 0.95, 2),  # 5% stop loss
+                              cost_basis,
+                              f"Theta assignment: CSP strike=${strike:.2f} premium=${premium:.2f}"))
+                        conn.commit()
+                        log.info(f"[THETA] Assignment processed: {ticker} position "
+                                 f"created at ${avg_cost:.2f}, stop at "
+                                 f"${avg_cost*0.95:.2f}")
+            except Exception as _ae:
+                log.warning(f"[THETA] Assignment check failed for {ticker}: {_ae}")
+
         return cancelled
 
     except Exception as e:
