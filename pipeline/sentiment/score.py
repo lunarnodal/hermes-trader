@@ -235,12 +235,20 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             import re as _re
             # Fix doubled sectors key: "sectors":"sectors": -> "sectors":
             raw = raw.replace('"sectors":"sectors":', '"sectors":')
-            # Fix double comma malformation: ,, -> ,
             import re as _re
+            # Fix double comma malformation: ,, -> ,
             raw = _re.sub(r',,+', ',', raw)
             # Fix trailing comma before closing brace/bracket
             raw = _re.sub(r',\s*}', '}', raw)
             raw = _re.sub(r',\s*]', ']', raw)
+            # Fix missing opening bracket: ,"sectors":"foo" -> ,"sectors":["foo"
+            raw = _re.sub(r'("(?:sectors|tickers|macro_themes)"):\s*"([^"]+)"',
+                           r':[""]', raw)
+            # Fix closing brace instead of bracket in arrays: ["EW"} -> ["EW"]
+            raw = _re.sub(r'(\["[^"]*")\}', r']', raw)
+            # Fix missing closing bracket before next key: ["foo","bar","baz","event
+            raw = _re.sub(r'(\["[^]]*?)("(?:event_type|sentiment|confidence|summary)")',
+                           r']', raw)
             # Fix double comma: ,, -> ,
             raw = _re.sub(r',\s*,', ',', raw)
             # Fix missing tickers entirely: "confidence":0.75,,"sectors" -> add tickers
