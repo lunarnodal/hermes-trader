@@ -246,7 +246,9 @@ def check_theta_exits(conn) -> list[dict]:
                 from alpaca_feed.data import get_live_prices
                 prices = get_live_prices([ticker])
                 current_price = prices.get(ticker)
-                if current_price and current_price <= strike * 1.05:
+                # Assignment risk: price drops within 2% ABOVE strike or below it
+                # (not when price is well above strike)
+                if current_price and current_price <= strike * 1.02:
                     close_reason = f"assignment_risk (price=${current_price:.2f} strike=${strike:.2f})"
 
             if close_reason:
