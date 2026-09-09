@@ -857,16 +857,19 @@ def cancel_expired_theta_positions(conn) -> int:
                 status = str(order.status).lower()
 
                 if "filled" in status and float(order.filled_qty or 0) > 0:
-                    # Confirmed fill — reserve cash and mark confirmed
+                    # Confirmed fill — update actual fill price, reserve cash
+                    actual_premium = float(order.filled_avg_price or premium)
                     reserve_cash_for_put(conn, ticker, strike, option_symbol,
-                                         "confirmed fill")
+                                         f"confirmed fill @ {actual_premium:.2f}")
                     conn.execute("""
                         UPDATE theta_positions
-                        SET notes = notes || ' | confirmed_fill'
+                        SET notes = notes || ' | confirmed_fill',
+                            premium_collected = ?
                         WHERE id = ?
-                    """, (pos_id,))
+                    """, (actual_premium, pos_id))
                     conn.commit()
-                    log.info(f"[THETA] Confirmed fill: {option_symbol} — cash reserved")
+                    log.info(f"[THETA] Confirmed fill: {option_symbol} "
+                             f"premium=${actual_premium:.2f} — cash reserved")
 
                 elif "expired" in status or "cancelled" in status:
                     # Order expired unfilled — cancel the DB position
