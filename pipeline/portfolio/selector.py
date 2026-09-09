@@ -514,12 +514,29 @@ def generate_recommendations(predictions: list[dict],
         # Hermes analysis (2026-08-31): challenge verdict reduces confidence but doesn't
         # block execution. This gate prevents the critic's "weak sector" warnings from
         # being overridden by marginal confidence scores.
-        sector_win_rates = {
-            "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38, "healthcare": 0.35,
-            "consumer": 0.30, "industrials": 0.14, "macro": 0.28,
-            "materials": 0.27, "financials": 0.21, "defense": 0.50,
+        # Dynamic win rates from prediction outcomes (last 90 days)
+        # Falls back to hardcoded defaults if insufficient data
+        _hardcoded_win_rates = {
+            "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38,
+            "healthcare": 0.35, "consumer": 0.30, "industrials": 0.14,
+            "macro": 0.28, "materials": 0.27, "financials": 0.21, "defense": 0.50,
         }
-        sector_win_rate = sector_win_rates.get(sector, 0.40)
+        sector_win_rate = _hardcoded_win_rates.get(sector, 0.40)
+        if conn:
+            try:
+                _row = conn.execute("""
+                    SELECT COUNT(*) as total,
+                           SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
+                    FROM predictions
+                    WHERE was_correct IS NOT NULL
+                      AND created_at >= datetime('now', '-90 days')
+                      AND (query LIKE ? OR query LIKE ?)
+                """, (f'%{sector}%', f'%{sector.replace("_", " ")}%')).fetchone()
+                if _row and _row[0] >= 20:  # min 20 samples for reliability
+                    sector_win_rate = round(_row[1] / _row[0], 3)
+                    log.debug(f"[WIN_RATE] {sector}: {_row[1]}/{_row[0]} = {sector_win_rate:.1%} (live)")
+            except Exception:
+                pass  # fall back to hardcoded
 
         # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
         if sector_win_rate < 0.35 and direction == "bullish" and confidence < 0.65:
