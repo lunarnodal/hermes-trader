@@ -201,6 +201,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           <tr>
             <th>Ticker</th><th>Sector</th><th>Shares</th>
             <th style="text-align:right">Entry</th>
+            <th style="text-align:right">Value</th>
             <th style="text-align:right">Price</th>
             <th style="text-align:right">P&L</th>
             <th style="text-align:right">Stop</th>
@@ -209,7 +210,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           </tr>
         </thead>
         <tbody id="positionsBody">
-          <tr><td colspan="8" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
+          <tr><td colspan="9" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -410,6 +411,9 @@ async function loadData() {
   document.getElementById('mReturn').textContent = fmtPct(retPct) + ' all time';
   document.getElementById('mCash').textContent = fmt$(p.cash||0);
   document.getElementById('mCashPct').textContent = cashPct + '% of portfolio';
+  // Show positions value under open positions count
+  document.getElementById('mSlots').textContent =
+    `${p.open_count||0}/${maxPos} slots · ${fmt$(p.positions_value||0)} deployed`;
 
   const wr = data.perf?.win_rate || 0;
   document.getElementById('mWinRate').innerHTML =
@@ -418,7 +422,6 @@ async function loadData() {
     `${data.perf?.correct||0}/${data.perf?.verified||0} verified`;
 
   document.getElementById('mPositions').textContent = p.open_count || 0;
-  document.getElementById('mSlots').textContent = `${p.open_count||0}/${maxPos} slots used`;
   document.getElementById('mVectors').textContent = (data.qdrant_count||0).toLocaleString();
   document.getElementById('mSignals24').textContent = `+${data.signals_24h||0} today`;
 
@@ -524,7 +527,7 @@ async function loadData() {
   const positions = data.positions || [];
   const posBody = document.getElementById('positionsBody');
   if (!positions.length) {
-    posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
+    posBody.innerHTML = '<tr><td colspan="9" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
   } else {
     posBody.innerHTML = positions.map(p => {
       const useLive    = p.live_price != null;
@@ -559,6 +562,7 @@ async function loadData() {
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
+        <td style="text-align:right;color:#8b949e">${fmt$(p.live_value||p.current_value||0)}</td>
         <td style="text-align:right">${priceCell}</td>
         <td style="text-align:right" class="${pnlCls}">${fmtPct(pnl)}</td>
         <td style="text-align:right" class="gray">${fmt$(p.stop_loss)}</td>
