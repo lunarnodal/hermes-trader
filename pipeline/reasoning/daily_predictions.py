@@ -84,6 +84,12 @@ def _build_daily_queries() -> list[dict]:
             "limit":     12,
             "label":     "market_overview"
         },
+        {
+            "query":     f"Merger arbitrage opportunities {today} — Form 8.3 filings, announced deals, takeover bids, spread compression, acquisition targets",
+            "timeframe": "48h",
+            "limit":     15,
+            "label":     "merger_arbitrage"
+        },
     ]
 
 # DAILY_QUERIES built fresh at runtime in run_daily_predictions()
