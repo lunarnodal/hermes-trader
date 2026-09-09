@@ -68,7 +68,7 @@ No explanation, no markdown, no preamble. Only the JSON object.
 Required fields:
 - sentiment: exactly one of "bullish", "bearish", "neutral"
 - confidence: float between 0.0 and 1.0
-- tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
+- tickers: array of up to 5 most relevant stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or [] — limit to primary tickers only, not every company mentioned
 - sectors: array of up to 3 PRIMARY affected sectors only (no indirect, no exhaustive lists)
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
@@ -109,7 +109,7 @@ No explanation, no markdown, no preamble. Only the JSON object.
 Required fields:
 - sentiment: exactly one of "bullish", "bearish", "neutral"
 - confidence: float between 0.0 and 1.0
-- tickers: array of stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or []
+- tickers: array of up to 5 most relevant stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or [] — limit to primary tickers only, not every company mentioned
 - sectors: array of up to 3 PRIMARY affected sectors only (no indirect, no exhaustive lists) — see inference rules below
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
