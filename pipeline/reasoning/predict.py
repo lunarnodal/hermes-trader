@@ -33,7 +33,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("/mnt/qnap/timeseries/logs/predict.log"),
+        logging.FileHandler(str(
+        Path(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
+             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))
+        / "predict.log"
+    )),
         logging.StreamHandler()
     ]
 )
