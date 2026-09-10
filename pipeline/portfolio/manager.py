@@ -11,6 +11,8 @@ import logging
 import os
 import sqlite3
 import sys
+
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
@@ -561,13 +563,19 @@ def execute_recommendations(conn, recommendations: list[dict],
                  f"(sector={sector}, conf={rec.get('avg_confidence', 0):.0%})")
 
         if not dry_run:
-            pos_id = open_position(
-                conn, ticker, sector, shares, price,
-                notes=rec.get("rationale", "")
-            )
-            if pos_id > 0:
-                _alpaca_mirror("BUY", ticker, shares,
-                               f"sector={sector} conf={rec.get('avg_confidence',0):.0%}")
+            pos_id = 0
+            if not AUDIT_MODE:
+                pos_id = open_position(
+                    conn, ticker, sector, shares, price,
+                    notes=rec.get("rationale", "")
+                )
+            else:
+                log.info(f"[AUDIT] DRY RUN — would open_position {ticker} {shares}sh @ ${price:.2f}")
+                pos_id = -1  # sentinel for audit mode
+            if pos_id > 0 or (AUDIT_MODE and pos_id == -1):
+                if not AUDIT_MODE:
+                    _alpaca_mirror("BUY", ticker, shares,
+                                   f"sector={sector} conf={rec.get('avg_confidence',0):.0%}")
                 executed.append({
                     "action":  "BUY",
                     "ticker":  ticker,
@@ -603,11 +611,13 @@ def save_recommendations(conn, recommendations: list[dict]) -> None:
             seen.add(key)
             unique_recs.append(rec)
     # Delete today's existing recommendations before saving fresh ones
-    conn.execute(
-        "DELETE FROM recommendations WHERE DATE(generated_at) = ?", (today,)
-    )
+    if not AUDIT_MODE:
+        conn.execute(
+            "DELETE FROM recommendations WHERE DATE(generated_at) = ?", (today,)
+        )
     for rec in unique_recs:
-        conn.execute("""
+        if not AUDIT_MODE:
+         conn.execute("""
             INSERT INTO recommendations
             (generated_at, ticker, action, sector, signal_count,
              avg_confidence, suggested_shares, suggested_value, rationale)

@@ -9,6 +9,8 @@ Option C: individual stocks when signals strong, ETF as fallback
 import json
 import logging
 import os
+
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
 from collections import defaultdict, Counter
 from datetime import datetime, timezone, timedelta
@@ -401,7 +403,8 @@ def _log_rejected_signal(sector: str, query: str, direction: str,
         from datetime import datetime, timezone
         _db = Path(__file__).parent.parent.parent / "data" / "paper_trading.db"
         conn = sqlite3.connect(str(_db))
-        conn.execute("""
+        if not AUDIT_MODE:
+            conn.execute("""
             INSERT INTO signal_ledger
               (created_at, query, sector, direction, raw_confidence,
                adj_confidence, gate_failed, gate_reason, sector_win_rate, vix_at_time)

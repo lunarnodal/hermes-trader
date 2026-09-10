@@ -8,6 +8,7 @@ upserts into Qdrant with full signal metadata as payload
 import json
 import os
 import logging
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
 import hashlib
 from datetime import datetime, timezone
@@ -164,18 +165,29 @@ def process_scored_file(scored_file: Path, client: QdrantClient) -> int:
 
     # Batch upsert to Qdrant
     if points:
-        result = client.upsert(
-            collection_name=COLLECTION,
-            points=points
-        )
-        log.info(f"  Upserted {len(points)} points — status: {result.status}")
+        if AUDIT_MODE:
+            audit_collection = os.getenv("AUDIT_QDRANT_COLLECTION", "audit_signals")
+            result = client.upsert(
+                collection_name=audit_collection,
+                points=points
+            )
+            log.info(f"[AUDIT] Upserted {len(points)} points to audit collection '{audit_collection}'")
+        else:
+            result = client.upsert(
+                collection_name=COLLECTION,
+                points=points
+            )
+            log.info(f"  Upserted {len(points)} points — status: {result.status}")
 
-    # Write embedded marker file
-    out_name = scored_file.name.replace("scored_", "embedded_")
-    out_path = TIMESERIES_DIR / out_name
-    with out_path.open("w") as f:
-        for signal in embedded:
-            f.write(json.dumps(signal) + "\n")
+    # Write embedded marker file (skip in audit mode)
+    if not AUDIT_MODE:
+        out_name = scored_file.name.replace("scored_", "embedded_")
+        out_path = TIMESERIES_DIR / out_name
+        with out_path.open("w") as f:
+            for signal in embedded:
+                f.write(json.dumps(signal) + "\n")
+    else:
+        log.info(f"[AUDIT] Skipping embedded marker file (audit mode)")
 
     return len(points)
 

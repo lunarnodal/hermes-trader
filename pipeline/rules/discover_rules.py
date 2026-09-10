@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import requests
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -194,7 +195,10 @@ def run_discovery() -> None:
         evidence = proposal.get("evidence", "")
 
         if trigger and sectors and len(trigger) > 4:
-            propose_rule(conn, trigger, sectors, evidence)
+            if AUDIT_MODE:
+                log.info(f"[AUDIT] Would propose rule: '{trigger}' → {sectors}")
+            else:
+                propose_rule(conn, trigger, sectors, evidence)
 
     pending  = conn.execute(
         "SELECT COUNT(*) FROM rule_proposals WHERE status = 'pending'"

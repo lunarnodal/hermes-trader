@@ -465,6 +465,18 @@ Based on these signals, provide your reasoning and prediction."""
 
 def save_and_record(result: dict) -> Path:
     """Save prediction to QNAP and record in paper trading DB"""
+    if AUDIT_MODE:
+        # Audit mode: save to audit-specific path, never write to production DB
+        audit_dir = Path(os.getenv("AUDIT_PREDICTIONS_DIR",
+                                    "/opt/hermes-audit/audit_output/predictions"))
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out = audit_dir / f"audit_prediction_{ts}.json"
+        import json as _json
+        out.write_text(_json.dumps(result, indent=2))
+        log.info(f"[AUDIT] Prediction saved to audit path: {out.name} (production DB skipped)")
+        return out
     out_path = save_prediction(result)
     try:
         from paper_trading.db import init_db as init_paper_db, record_prediction as rec_pred

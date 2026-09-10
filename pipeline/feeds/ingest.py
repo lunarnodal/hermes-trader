@@ -8,6 +8,7 @@ import feedparser
 import json
 import hashlib
 import os
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import sqlite3
 import logging
 from datetime import datetime, timezone, timedelta
@@ -230,9 +231,12 @@ def fetch_feed(feed: dict, conn: sqlite3.Connection) -> list[dict]:
                 "bloomberg_tickers": bloomberg_tickers if bloomberg_tickers else None,
             }
 
-            mark_ingested(conn, guid, name, title, url_entry,
-                          article["published"] or "")
-            save_raw(article, name)
+            if not AUDIT_MODE:
+                mark_ingested(conn, guid, name, title, url_entry,
+                              article["published"] or "")
+                save_raw(article, name)
+            else:
+                log.debug(f"[AUDIT] Would ingest: {title[:60]}")
             new_articles.append(article)
 
     except Exception as e:
@@ -265,7 +269,11 @@ def run_once() -> Path | None:
         all_new.extend(articles)
         log.info(f"[{feed['name']}] {len(articles)} new articles")
 
-    queue_file = write_queue(all_new)
+    if AUDIT_MODE:
+        queue_file = None
+        log.info(f"[AUDIT] DRY RUN — would queue {len(all_new)} articles (no file written)")
+    else:
+        queue_file = write_queue(all_new)
     log.info(f"─── Ingestion complete: {len(all_new)} total new articles ───")
     conn.close()
     return queue_file
