@@ -312,7 +312,21 @@ def get_sector_exposure(conn: sqlite3.Connection) -> dict:
 
 
 def get_portfolio_value(conn: sqlite3.Connection) -> float:
-    return get_cash_balance(conn) + get_positions_value(conn)
+    cash = get_cash_balance(conn)
+    positions = get_positions_value(conn)
+    # Add back theta cash reservations — reserved cash is still portfolio value,
+    # just earmarked for CSP coverage. Without this, reservations cause false
+    # drawdown circuit breaker triggers.
+    try:
+        reserved = conn.execute("""
+            SELECT COALESCE(SUM(strike * 100), 0.0)
+            FROM theta_positions
+            WHERE status = 'open'
+            AND notes LIKE '%confirmed_fill%'
+        """).fetchone()[0] or 0.0
+    except Exception:
+        reserved = 0.0
+    return cash + positions + reserved
 
 
 def positions_this_week(conn: sqlite3.Connection) -> int:
