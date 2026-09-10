@@ -1328,13 +1328,14 @@ def get_theta_positions() -> str:
 
         open_positions = [p for p in positions if p["status"] == "open"]
         return json.dumps({
-            "positions":          positions,
+            "open_positions":     [p for p in positions if p["status"] == "open"],
+            "recent_closed":      [p for p in positions if p["status"] != "open"][:5],
             "open_count":         len(open_positions),
             "total_premium_open": round(total_premium, 2),
             "assignment_risk_count": sum(1 for p in open_positions if p["assignment_risk"]),
             "summary": (f"{len(open_positions)} open theta position(s), "
                         f"${total_premium:.2f} total premium collected") if open_positions
-                       else "No open theta positions"
+                       else "No open theta positions currently. Check recent_closed for history."
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
