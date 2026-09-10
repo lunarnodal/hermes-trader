@@ -1257,6 +1257,89 @@ def get_sector_trim() -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+@mcp.tool()
+def get_theta_positions() -> str:
+    """
+    Get all open theta-gang positions (covered calls and cash-secured puts).
+    Returns position details including strike, expiry, DTE, premium, fill status,
+    and assignment risk flag.
+    """
+    try:
+        import sqlite3 as _sql
+        from datetime import datetime as _dt, timezone as _tz
+        from alpaca_feed.data import get_live_prices
+
+        db_path = DB_PATH.parent / "portfolio.db"
+        conn = _sql.connect(str(db_path))
+        rows = conn.execute("""
+            SELECT id, ticker, sector, instrument_type, strike, expiry,
+                   premium_collected, entry_date, option_symbol, status, notes
+            FROM theta_positions
+            WHERE status IN ('open', 'cancelled')
+            ORDER BY entry_date DESC
+            LIMIT 20
+        """).fetchall()
+        conn.close()
+
+        positions = []
+        open_tickers = [r[1] for r in rows if r[9] == 'open']
+        prices = get_live_prices(open_tickers) if open_tickers else {}
+
+        total_premium = 0.0
+        for r in rows:
+            pos_id, ticker, sector, instrument_type, strike, expiry,                 premium, entry_date, option_symbol, status, notes = r
+            try:
+                expiry_dt = _dt.strptime(expiry, "%Y-%m-%d").replace(tzinfo=_tz.utc)
+                dte = max(0, (expiry_dt - _dt.now(_tz.utc)).days)
+            except Exception:
+                dte = 0
+
+            current_price = prices.get(ticker)
+            assignment_risk = False
+            if current_price and instrument_type == "cash_secured_put":
+                assignment_risk = current_price <= strike * 1.02
+
+            pnl_pct = None
+            if status == 'open' and current_price:
+                cash_secured = strike * 100
+                pnl_pct = round((premium * 100) / cash_secured * 100, 2)
+
+            if status == 'open':
+                total_premium += premium * 100
+
+            positions.append({
+                "id":              pos_id,
+                "ticker":          ticker,
+                "sector":          sector or "",
+                "instrument":      "CSP" if instrument_type == "cash_secured_put" else "CC",
+                "strike":          strike,
+                "expiry":          expiry,
+                "dte":             dte,
+                "premium":         round(premium, 2),
+                "premium_contract": round(premium * 100, 2),
+                "cash_required":   round(strike * 100, 2),
+                "option_symbol":   option_symbol or "",
+                "status":          status,
+                "assignment_risk": assignment_risk,
+                "underlying_price": current_price,
+                "annualized_yield": round(premium / strike * 365 / max(dte, 1) * 100, 2) if dte > 0 else 0,
+                "notes":           (notes or "")[:100],
+            })
+
+        open_positions = [p for p in positions if p["status"] == "open"]
+        return json.dumps({
+            "positions":          positions,
+            "open_count":         len(open_positions),
+            "total_premium_open": round(total_premium, 2),
+            "assignment_risk_count": sum(1 for p in open_positions if p["assignment_risk"]),
+            "summary": (f"{len(open_positions)} open theta position(s), "
+                        f"${total_premium:.2f} total premium collected") if open_positions
+                       else "No open theta positions"
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
