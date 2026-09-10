@@ -33,6 +33,7 @@ if _pipeline_dir not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 from portfolio.market_calendar import is_trading_day
+from portfolio.db import DB_PATH
 from portfolio.vix_gate import get_vix_gate
 from alpaca_feed.data import get_live_prices
 
