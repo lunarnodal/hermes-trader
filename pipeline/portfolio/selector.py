@@ -410,10 +410,12 @@ def _log_rejected_signal(sector: str, query: str, direction: str,
     try:
         import sqlite3
         from datetime import datetime, timezone
-        _db = Path(__file__).parent.parent.parent / "data" / "paper_trading.db"
+        from config import PAPER_DB
+        # In AUDIT_MODE write to audit-specific ledger DB if configured,
+        # otherwise use PAPER_DB (which points to staging DB via DATA_DIR)
+        _db = Path(os.getenv("AUDIT_LEDGER_DB", str(PAPER_DB)))
         conn = sqlite3.connect(str(_db))
-        if not AUDIT_MODE:
-            conn.execute("""
+        conn.execute("""
             INSERT INTO signal_ledger
               (created_at, query, sector, direction, raw_confidence,
                adj_confidence, gate_failed, gate_reason, sector_win_rate, vix_at_time)
