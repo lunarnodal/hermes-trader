@@ -64,7 +64,7 @@ def _get_qdrant():
 
 
 def semantic_win_rate(sector_query: str,
-                      conn: sqlite3.Connection,
+                      conn: sqlite3.Connection = None,
                       top_k: int = 100,
                       hours_back: int = 2160,  # 90 days
                       min_samples: int = 10) -> float | None:
@@ -123,8 +123,6 @@ def semantic_win_rate(sector_query: str,
             return None
 
         # Find predictions that were made after seeing these signals
-        # Match on sector overlap using the signal titles as context
-        # We look for predictions in the same time window as these signals
         similar_sectors = set()
         for r in results:
             for s in (r.payload.get("sectors") or []):
@@ -138,14 +136,20 @@ def semantic_win_rate(sector_query: str,
             f"query LIKE '%{s}%'" for s in list(similar_sectors)[:10]
         ])
 
-        row = conn.execute(f"""
-            SELECT COUNT(*) as total,
-                   SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
-            FROM predictions
-            WHERE was_correct IS NOT NULL
-              AND created_at >= datetime('now', '-90 days')
-              AND ({sector_conditions})
-        """).fetchone()
+        # Predictions live in paper_trading.db, not portfolio.db
+        _paper_db = Path(__file__).parent.parent.parent / "data" / "paper_trading.db"
+        _pred_conn = sqlite3.connect(str(_paper_db))
+        try:
+            row = _pred_conn.execute(f"""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
+                FROM predictions
+                WHERE was_correct IS NOT NULL
+                  AND created_at >= datetime('now', '-90 days')
+                  AND ({sector_conditions})
+            """).fetchone()
+        finally:
+            _pred_conn.close()
 
         if not row or row[0] < min_samples:
             log.debug(f"[SEMANTIC] Insufficient samples for '{sector_query[:40]}': "
