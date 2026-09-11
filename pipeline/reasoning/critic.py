@@ -27,6 +27,137 @@ PAPER_DB   = Path("/home/trading/trading-ai/data/paper_trading.db")
 LESSONS_DB = Path("/home/trading/trading-ai/data/lessons.db")
 RULES_DB   = Path("/home/trading/trading-ai/data/rules.db")
 
+# Organic sector → ETF mapping for momentum gate
+# Covers both canonical sectors and organic tags discovered in signal corpus
+SECTOR_ETF_MAP = {
+    # Canonical sectors
+    "technology":       "XLK",
+    "energy":           "XLE",
+    "healthcare":       "XLV",
+    "financials":       "XLF",
+    "industrials":      "XLI",
+    "consumer":         "XLY",
+    "materials":        "XLB",
+    "macro":            "SPY",
+    "defense":          "XAR",
+    # Organic sub-sector tags → parent ETF
+    "ai_infrastructure":"XLK",
+    "semiconductors":   "SOXX",
+    "biotech":          "XLV",
+    "banking":          "XLF",
+    "real_estate":      "XLRE",
+    "utilities":        "XLU",
+    "consumer_staples": "XLP",
+    "commodities":      "XLB",
+    "aerospace":        "XAR",
+    "space":            "XAR",
+    "cybersecurity":    "XLK",
+    "software":         "XLK",
+    "data_center":      "XLK",
+    "emerging_markets": "EEM",
+    "india":            "INDA",
+    "automotive":       "XLY",
+    "entertainment":    "XLY",
+    "chemicals":        "XLB",
+    "agriculture":      "MOO",
+    "construction":     "XLI",
+    "aviation":         "XAR",
+    "commercial_real_estate": "XLRE",
+}
+
+# Cache momentum data per session (30 min TTL)
+_momentum_cache: dict[str, tuple[float, float]] = {}  # etf → (timestamp, pct_change)
+_MOMENTUM_CACHE_TTL = 1800
+
+def get_sector_momentum(sector: str, days: int = 5) -> float | None:
+    """
+    Get N-day price momentum for the sector ETF.
+    Returns percentage change (e.g. -0.047 = -4.7%) or None if unavailable.
+    
+    Positive = ETF trending up (supports bullish)
+    Negative = ETF trending down (contradicts bullish)
+    """
+    import time
+    import os
+
+    etf = SECTOR_ETF_MAP.get(sector.lower())
+    if not etf:
+        return None
+
+    # Check cache
+    now = time.time()
+    if etf in _momentum_cache:
+        cached_ts, cached_val = _momentum_cache[etf]
+        if now - cached_ts < _MOMENTUM_CACHE_TTL:
+            return cached_val
+
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+        from datetime import datetime, timezone, timedelta
+
+        key    = os.getenv("ALPACA_API_KEY", "")
+        secret = os.getenv("ALPACA_SECRET_KEY", "")
+        if not key:
+            return None
+
+        client = StockHistoricalDataClient(key, secret)
+        start  = datetime.now(timezone.utc) - timedelta(days=days + 3)  # +3 for weekends
+
+        req = StockBarsRequest(
+            symbol_or_symbols=etf,
+            timeframe=TimeFrame.Day,
+            start=start,
+        )
+        bars = client.get_stock_bars(req)
+
+        try:
+            bar_list = bars[etf]
+        except (KeyError, TypeError):
+            return None
+        if not bar_list or len(bar_list) < 2:
+            return None
+
+        oldest   = float(bar_list[0].close)
+        latest   = float(bar_list[-1].close)
+        pct      = (latest - oldest) / oldest
+
+        _momentum_cache[etf] = (now, pct)
+        log.debug(f"[CRITIC] {sector} ({etf}) {days}d momentum: {pct:+.1%}")
+        return round(pct, 4)
+
+    except Exception as e:
+        log.debug(f"[CRITIC] Momentum fetch failed for {sector} ({etf}): {e}")
+        return None
+
+
+def get_directional_streak(sector: str, direction: str, window: int = 8) -> tuple[int, float]:
+    """
+    Check recent directional accuracy for this sector.
+    Returns (wrong_count, error_rate) for the given direction in last N predictions.
+    e.g. (3, 0.75) = wrong 3 out of 4 recent bullish predictions = 75% error rate
+    """
+    try:
+        conn = sqlite3.connect(PAPER_DB)
+        rows = conn.execute("""
+            SELECT direction, was_correct
+            FROM predictions
+            WHERE query LIKE ? AND was_correct IS NOT NULL
+              AND direction = ?
+            ORDER BY created_at DESC LIMIT ?
+        """, (f"%{sector}%", direction, window)).fetchall()
+        conn.close()
+
+        if not rows:
+            return 0, 0.0
+        wrong = sum(1 for _, correct in rows if not correct)
+        error_rate = wrong / len(rows)
+        return wrong, error_rate
+    except Exception as e:
+        log.debug(f"[CRITIC] Directional accuracy check failed: {e}")
+        return 0, 0.0
+
 # Thresholds
 MIN_WIN_RATE_FOR_HIGH_CONF = 0.45  # sector needs >45% win rate to support >80% confidence
 CONTRADICTION_PENALTY      = 0.10  # reduce confidence when contradictions found
@@ -248,20 +379,24 @@ def critique_prediction(query: str,
     supporting = []
     confidence_adjustment = 0.0
 
-    # Extract sector from query
+    # Extract sector from query using organic ETF map + keyword fallback
     sector = 'unknown'
-    sector_map = {
-        'technology':  ['technology', 'ai', 'semiconductor'],
-        'healthcare':  ['healthcare', 'biotech'],
-        'energy':      ['energy', 'oil', 'gas'],
-        'financials':  ['financial', 'bank'],
-        'materials':   ['materials', 'mining', 'metals'],
-        'industrials': ['industrials', 'defense', 'aerospace'],
-        'consumer':    ['consumer', 'retail'],
-        'macro':       ['market outlook', 'macro', 's&p'],
-    }
     q_lower = query.lower()
-    for s, keywords in sector_map.items():
+
+    # Try semantic sector detection first (fast keyword pass over organic tags)
+    _keyword_map = {
+        'technology':  ['technology', 'ai sector', 'semiconductor', 'data center'],
+        'healthcare':  ['healthcare', 'biotech', 'pharma', 'drug'],
+        'energy':      ['energy', 'oil', 'gas', 'renewables'],
+        'financials':  ['financial', 'bank', 'interest rate', 'real estate'],
+        'materials':   ['materials', 'mining', 'metals', 'chemicals', 'commodities'],
+        'industrials': ['industrials', 'manufacturing', 'infrastructure'],
+        'consumer':    ['consumer', 'retail', 'discretionary', 'staples'],
+        'macro':       ['market outlook', 'macro', 's&p 500', 'overall market'],
+        'defense':     ['defense', 'aerospace', 'military'],
+        'ai_infrastructure': ['ai infrastructure', 'ai_infrastructure', 'data center'],
+    }
+    for s, keywords in _keyword_map.items():
         if any(kw in q_lower for kw in keywords):
             sector = s
             break
@@ -363,6 +498,62 @@ def critique_prediction(query: str,
                     f"Known dependency: {dep['from']} → {dep['to']} "
                     f"({dep['occurrences']}x observed): {dep['relationship']}"
                 )
+
+    # ── Check 6: Price momentum gate ─────────────────────────────────────────
+    # If the sector ETF is trending strongly opposite to the prediction direction,
+    # challenge the prediction regardless of signal quality.
+    MOMENTUM_THRESHOLD = 0.025  # 2.5% move triggers challenge
+    MOMENTUM_STRONG    = 0.050  # 5.0% move triggers harder challenge
+
+    momentum = get_sector_momentum(sector, days=5)
+    if momentum is not None:
+        if direction == 'bullish' and momentum < -MOMENTUM_THRESHOLD:
+            etf_name = SECTOR_ETF_MAP.get(sector, 'ETF')
+            penalty = CONTRADICTION_PENALTY if momentum > -MOMENTUM_STRONG else CONTRADICTION_PENALTY * 1.5
+            issues.append(
+                f"Momentum contradiction: predicting bullish {sector} but "
+                f"{etf_name} is down {abs(momentum):.1%} this week"
+            )
+            confidence_adjustment -= penalty
+            log.debug(f"[CRITIC] Momentum gate fired: {sector} {momentum:+.1%} vs bullish")
+        elif direction == 'bearish' and momentum > MOMENTUM_THRESHOLD:
+            etf_name = SECTOR_ETF_MAP.get(sector, 'ETF')
+            penalty = CONTRADICTION_PENALTY if momentum < MOMENTUM_STRONG else CONTRADICTION_PENALTY * 1.5
+            issues.append(
+                f"Momentum contradiction: predicting bearish {sector} but "
+                f"{etf_name} is up {momentum:.1%} this week"
+            )
+            confidence_adjustment -= penalty
+        elif direction == 'bullish' and momentum > MOMENTUM_THRESHOLD:
+            supporting.append(
+                f"Momentum confirms: {SECTOR_ETF_MAP.get(sector, 'ETF')} "
+                f"up {momentum:.1%} this week"
+            )
+        elif direction == 'bearish' and momentum < -MOMENTUM_THRESHOLD:
+            supporting.append(
+                f"Momentum confirms: {SECTOR_ETF_MAP.get(sector, 'ETF')} "
+                f"down {abs(momentum):.1%} this week"
+            )
+
+    # ── Check 7: Directional streak ───────────────────────────────────────────
+    # If the same direction has been wrong N times in a row, increase skepticism.
+    STREAK_CHALLENGE = 3   # wrong 3 times → challenge
+    STREAK_REJECT    = 5   # wrong 5 times → reject
+
+    if direction in ('bullish', 'bearish'):
+        wrong_count, error_rate = get_directional_streak(sector, direction, window=8)
+        if wrong_count >= 3 and error_rate >= 0.75:
+            issues.append(
+                f"Direction bias: {direction} {sector} wrong {wrong_count} of last "
+                f"{round(wrong_count/error_rate):.0f} predictions ({error_rate:.0%} error rate)"
+            )
+            confidence_adjustment -= CONTRADICTION_PENALTY * 2
+        elif wrong_count >= 2 and error_rate >= 0.60:
+            issues.append(
+                f"Direction bias: {direction} {sector} wrong {wrong_count} of last "
+                f"{round(wrong_count/error_rate):.0f} predictions ({error_rate:.0%} error rate)"
+            )
+            confidence_adjustment -= CONTRADICTION_PENALTY
 
     # ── Determine verdict ─────────────────────────────────────────────────────
     confidence_adjustment = max(-MAX_REDUCTIONS,
