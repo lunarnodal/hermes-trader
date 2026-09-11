@@ -51,11 +51,15 @@ except ImportError:
     log.warning("Calibration module not available")
 
 try:
-    from reasoning.signal_graph import enrich_signals
+    from reasoning.semantic_gates import enrich_signals_semantic as enrich_signals
     SIGNAL_GRAPH_ENABLED = True
 except ImportError:
-    SIGNAL_GRAPH_ENABLED = False
-    log.warning("Signal graph module not available")
+    try:
+        from reasoning.signal_graph import enrich_signals
+        SIGNAL_GRAPH_ENABLED = True
+    except ImportError:
+        SIGNAL_GRAPH_ENABLED = False
+        log.warning("Signal graph module not available")
 
 REASONING_SYSTEM = """You are a disciplined financial market analyst combining
 sentiment signal analysis with evidence-based investing principles.

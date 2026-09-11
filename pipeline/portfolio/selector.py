@@ -10,6 +10,14 @@ import json
 import logging
 import os
 
+# Semantic gate engine — embedding-based win rates and sector discovery
+try:
+    from reasoning.semantic_gates import semantic_win_rate as _semantic_win_rate
+    SEMANTIC_GATES_ENABLED = True
+except ImportError:
+    SEMANTIC_GATES_ENABLED = False
+    _semantic_win_rate = None
+
 AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
 from collections import defaultdict, Counter
@@ -526,20 +534,39 @@ def generate_recommendations(predictions: list[dict],
         }
         sector_win_rate = _hardcoded_win_rates.get(sector, 0.40)
         if conn:
-            try:
-                _row = conn.execute("""
-                    SELECT COUNT(*) as total,
-                           SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
-                    FROM predictions
-                    WHERE was_correct IS NOT NULL
-                      AND created_at >= datetime('now', '-90 days')
-                      AND (query LIKE ? OR query LIKE ?)
-                """, (f'%{sector}%', f'%{sector.replace("_", " ")}%')).fetchone()
-                if _row and _row[0] >= 20:  # min 20 samples for reliability
-                    sector_win_rate = round(_row[1] / _row[0], 3)
-                    log.debug(f"[WIN_RATE] {sector}: {_row[1]}/{_row[0]} = {sector_win_rate:.1%} (live)")
-            except Exception:
-                pass  # fall back to hardcoded
+            # Try semantic win rate first — uses embedding proximity to find
+            # similar past predictions regardless of sector tag taxonomy
+            _semantic_wr = None
+            if SEMANTIC_GATES_ENABLED and _semantic_win_rate:
+                try:
+                    _semantic_wr = _semantic_win_rate(
+                        f"{sector} {query}",
+                        conn,
+                        top_k=100,
+                        min_samples=10
+                    )
+                    if _semantic_wr is not None:
+                        sector_win_rate = _semantic_wr
+                        log.debug(f"[WIN_RATE] {sector}: {sector_win_rate:.1%} (semantic)")
+                except Exception as _swe:
+                    log.debug(f"[WIN_RATE] Semantic lookup failed for {sector}: {_swe}")
+
+            # Fall back to text-match if semantic unavailable or insufficient data
+            if _semantic_wr is None:
+                try:
+                    _row = conn.execute("""
+                        SELECT COUNT(*) as total,
+                               SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
+                        FROM predictions
+                        WHERE was_correct IS NOT NULL
+                          AND created_at >= datetime('now', '-90 days')
+                          AND (query LIKE ? OR query LIKE ?)
+                    """, (f'%{sector}%', f'%{sector.replace("_", " ")}%')).fetchone()
+                    if _row and _row[0] >= 20:
+                        sector_win_rate = round(_row[1] / _row[0], 3)
+                        log.debug(f"[WIN_RATE] {sector}: {_row[1]}/{_row[0]} = {sector_win_rate:.1%} (text-match)")
+                except Exception:
+                    pass  # fall back to hardcoded
 
         # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
         if sector_win_rate < 0.35 and direction == "bullish" and confidence < 0.65:

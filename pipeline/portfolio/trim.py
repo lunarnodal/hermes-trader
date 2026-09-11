@@ -34,9 +34,9 @@ LTFT_MAX  =  0.0    # never reward (trust is earned by removing penalty, not add
 STFT_MAX  =  0.20   # cap single-cycle STFT correction
 STFT_MIN  = -0.20
 
-# Sector keyword mapping — matches query text to sector
+# Sector keyword mapping — fallback when semantic lookup unavailable
 SECTOR_KEYWORDS = {
-    "technology":  ["technology", "ai", "semiconductor", "data center"],
+    "technology":  ["technology", "ai", "semiconductor", "data center", "ai_infrastructure"],
     "energy":      ["energy", "oil", "gas", "utilities", "renewables"],
     "financials":  ["financial", "bank", "rates", "real estate"],
     "healthcare":  ["healthcare", "biotech", "pharma"],
@@ -47,7 +47,94 @@ SECTOR_KEYWORDS = {
     "macro":       ["market outlook", "macro", "s&p 500"],
 }
 
+# Sector prototype queries for semantic embedding comparison
+SECTOR_PROTOTYPES = {
+    "technology":  "technology AI semiconductor data center cloud computing software",
+    "energy":      "energy oil gas utilities renewables crude petroleum power",
+    "financials":  "financial banking interest rates real estate Fed monetary policy",
+    "healthcare":  "healthcare biotech pharma drug approval clinical trial medical",
+    "defense":     "defense aerospace military contractor weapons spending NATO",
+    "materials":   "materials mining metals chemicals commodities copper lithium",
+    "industrials": "industrials manufacturing infrastructure construction machinery",
+    "consumer":    "consumer retail discretionary staples spending e-commerce",
+    "macro":       "market outlook macro S&P 500 GDP recession Fed policy",
+}
+
+# Cache sector prototype embeddings
+_sector_embeddings: dict[str, list[float]] = {}
+
+
+def _get_sector_embeddings() -> dict[str, list[float]]:
+    """Lazily compute and cache sector prototype embeddings."""
+    global _sector_embeddings
+    if _sector_embeddings:
+        return _sector_embeddings
+    try:
+        import requests
+        import os
+        embed_url = os.getenv("LLAMA_EMBED_URL", "http://localhost:8081/v1/embeddings")
+        embed_model = os.getenv("LLAMA_EMBED_MODEL", "bge-m3")
+        for sector, proto in SECTOR_PROTOTYPES.items():
+            resp = requests.post(
+                embed_url,
+                json={"model": embed_model, "input": proto},
+                timeout=30
+            )
+            if resp.ok:
+                data = resp.json().get("data", [])
+                if data and "embedding" in data[0]:
+                    _sector_embeddings[sector] = data[0]["embedding"]
+        log.info(f"[TRIM] Sector embeddings loaded: {list(_sector_embeddings.keys())}")
+    except Exception as e:
+        log.warning(f"[TRIM] Could not load sector embeddings: {e}")
+    return _sector_embeddings
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    mag_a = math.sqrt(sum(x * x for x in a))
+    mag_b = math.sqrt(sum(x * x for x in b))
+    if mag_a == 0 or mag_b == 0:
+        return 0.0
+    return dot / (mag_a * mag_b)
+
+
 def query_to_sector(query: str) -> str:
+    """
+    Map a prediction query to a canonical sector.
+    Tries semantic similarity first, falls back to keyword matching.
+    """
+    # Try semantic sector mapping
+    try:
+        import requests
+        import os
+        embed_url = os.getenv("LLAMA_EMBED_URL", "http://localhost:8081/v1/embeddings")
+        embed_model = os.getenv("LLAMA_EMBED_MODEL", "bge-m3")
+        resp = requests.post(
+            embed_url,
+            json={"model": embed_model, "input": query},
+            timeout=15
+        )
+        if resp.ok:
+            data = resp.json().get("data", [])
+            if data and "embedding" in data[0]:
+                query_vec = data[0]["embedding"]
+                sector_vecs = _get_sector_embeddings()
+                if sector_vecs:
+                    best_sector = max(
+                        sector_vecs.keys(),
+                        key=lambda s: _cosine_similarity(query_vec, sector_vecs[s])
+                    )
+                    best_score = _cosine_similarity(query_vec, sector_vecs[best_sector])
+                    if best_score > 0.5:  # minimum similarity threshold
+                        log.debug(f"[TRIM] Semantic sector: '{query[:40]}' → {best_sector} ({best_score:.2f})")
+                        return best_sector
+    except Exception as e:
+        log.debug(f"[TRIM] Semantic sector lookup failed: {e}")
+
+    # Keyword fallback
     q = query.lower()
     for sector, keywords in SECTOR_KEYWORDS.items():
         if any(kw in q for kw in keywords):
