@@ -648,6 +648,16 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     conn     = init_db()
     results  = {"exits": [], "entries": [], "recommendations": []}
 
+    # Sync Alpaca state into DB — Alpaca is source of truth for cash and positions
+    if not dry_run and not AUDIT_MODE:
+        try:
+            from alpaca_feed.alpaca_cache import sync_from_alpaca
+            _sync = sync_from_alpaca(conn)
+            if _sync.get("divergences"):
+                log.warning(f"[CACHE] {len(_sync['divergences'])} divergence(s) corrected")
+        except Exception as _ce:
+            log.warning(f"[CACHE] Alpaca sync failed (non-fatal): {_ce}")
+
     # ── Step 1: Check exits (stop loss / take profit / time) ──────────────────
     if is_market_hours() or dry_run:
         exits = check_stop_loss_take_profit(conn, dry_run)

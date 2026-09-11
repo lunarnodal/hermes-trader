@@ -655,7 +655,7 @@ def get_reentry_status(conn: sqlite3.Connection,
 def take_snapshot(conn: sqlite3.Connection) -> dict:
     cash       = get_cash_balance(conn)
     pos_value  = get_positions_value(conn)
-    total      = cash + pos_value
+    total      = get_portfolio_value(conn)  # includes theta reservations
     ret_pct    = (total - CONFIG["starting_capital"]) / CONFIG["starting_capital"] * 100
     open_pos   = len(get_open_positions(conn))
     now        = datetime.now(timezone.utc).isoformat()
