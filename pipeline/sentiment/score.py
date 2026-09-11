@@ -7,6 +7,8 @@ Reads queue files, scores each article via Ollama, writes structured signals
 import json
 import os
 import logging
+
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
 import time
 from datetime import datetime, timezone
