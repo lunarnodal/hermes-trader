@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import logging
+
+AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
 import argparse
 from datetime import datetime, timezone, timedelta
