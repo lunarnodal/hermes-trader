@@ -169,14 +169,17 @@ def query_qdrant(query: str, limit: int = 15,
     from datetime import datetime, timezone, timedelta
     from qdrant_client.models import DatetimeRange, Range
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
-
-    must_conditions = [
-        FieldCondition(
-            key="published",
-            range=DatetimeRange(gte=cutoff)
-        )
-    ]
+    # In AUDIT_MODE skip recency filter — seeded test signals may be older
+    if not AUDIT_MODE:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
+        must_conditions = [
+            FieldCondition(
+                key="published",
+                range=DatetimeRange(gte=cutoff)
+            )
+        ]
+    else:
+        must_conditions = []
     if sentiment_filter:
         must_conditions.append(FieldCondition(
             key="sentiment",
