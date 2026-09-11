@@ -35,7 +35,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading AI Dashboard</title>
-<meta http-equiv="refresh" content="60">
+<meta http-equiv="refresh" content="300">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}

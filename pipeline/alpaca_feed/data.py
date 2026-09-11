@@ -19,7 +19,7 @@ ALPACA_SECRET = os.getenv("ALPACA_SECRET_KEY", "")
 # Cache quotes for 30 seconds to avoid hammering API on every dashboard refresh
 _quote_cache = {}
 _cache_ts    = {}
-CACHE_TTL    = 30
+CACHE_TTL    = 300  # 5 minutes — matches dashboard refresh interval
 
 
 def get_live_prices(symbols: list[str]) -> dict[str, float]:
