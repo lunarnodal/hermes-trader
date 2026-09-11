@@ -248,7 +248,7 @@ def check_theta_exits(conn) -> list[dict]:
                 current_price = prices.get(ticker)
                 # Assignment risk: price drops within 2% ABOVE strike or below it
                 # (not when price is well above strike)
-                if current_price and current_price <= strike * 1.02:
+                if current_price and current_price <= strike * 1.00:  # only flag at or below strike
                     close_reason = f"assignment_risk (price=${current_price:.2f} strike=${strike:.2f})"
 
             if close_reason:
@@ -273,12 +273,20 @@ def check_theta_exits(conn) -> list[dict]:
                         exit_price=close_cost,
                         notes=close_reason
                     )
-                    # Release reserved cash back to available balance
-                    release_cash_for_put(
-                        conn, ticker, strike,
-                        premium_collected=premium_collected,
-                        notes=f"closed: {close_reason}"
-                    )
+                    # Only release cash if it was previously reserved
+                    reserved = conn.execute("""
+                        SELECT COUNT(*) FROM cash_ledger
+                        WHERE description LIKE ? AND amount < 0
+                    """, (f'%THETA RESERVE%{ticker}%',)).fetchone()[0]
+                    if reserved > 0:
+                        release_cash_for_put(
+                            conn, ticker, strike,
+                            premium_collected=premium_collected,
+                            notes=f"closed: {close_reason}"
+                        )
+                    else:
+                        log.info(f"[THETA] Skipping cash release for {ticker} "
+                                 f"— no prior reservation found")
                     exits.append({
                         "ticker":    ticker,
                         "action":    "BTC",

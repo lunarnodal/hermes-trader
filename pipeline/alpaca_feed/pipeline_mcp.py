@@ -278,14 +278,16 @@ def get_portfolio_state() -> str:
             "held_since": p[7][:10],
         })
 
-    total = cash + total_pos_value
+    from portfolio.db import get_portfolio_value, CONFIG as _PORT_CONFIG
+    total = get_portfolio_value(conn)
+    starting = _PORT_CONFIG.get("starting_capital", 100000)
     conn.close()
 
     return json.dumps({
         "cash":            f"${cash:,.2f}",
         "positions_value": f"${total_pos_value:,.2f}",
         "total":           f"${total:,.2f}",
-        "return_pct":      f"{(total-100000)/100000*100:+.2f}%",
+        "return_pct":      f"{(total-starting)/starting*100:+.2f}%",
         "open_positions":  len(pos_list),
         "positions":       pos_list,
         "cash_pct":        f"{cash/total*100:.0f}%" if total > 0 else "100%",

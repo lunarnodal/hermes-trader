@@ -1284,7 +1284,7 @@ def api_data():
                 prices = get_live_prices([ticker])
                 current_price = prices.get(ticker)
                 if current_price and instrument_type == "cash_secured_put":
-                    assignment_risk = current_price <= strike * 1.02
+                    assignment_risk = current_price <= strike * 1.00  # only flag at or below strike
             except Exception:
                 pass
             # Check fill status from Alpaca if option_symbol available
