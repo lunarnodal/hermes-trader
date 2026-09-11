@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paper_trading.db import init_db, get_performance_summary
 from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
-                          get_cash_balance, get_portfolio_value, CONFIG as PORT_CONFIG)
+                          get_cash_balance, get_portfolio_value, get_positions_value,
+                          CONFIG as PORT_CONFIG)
 from qdrant_client import QdrantClient
 
 app = Flask(__name__)
@@ -1082,11 +1083,12 @@ def api_data():
             ORDER BY exit_date DESC LIMIT 10
         """).fetchall()
 
+        pos_value = round(get_positions_value(port_conn), 2)
         port_conn.close()
 
         data['portfolio'] = {
             'cash':          round(cash, 2),
-            'positions_value': round(port_value - cash, 2),
+            'positions_value': pos_value,
             'total_value':   round(port_value, 2),
             'starting':      starting,
             'return_pct':    round(ret_pct, 2),
@@ -1260,6 +1262,7 @@ def api_data():
                    premium_collected, entry_date, option_symbol
             FROM theta_positions
             WHERE status = 'open'
+            AND notes NOT LIKE '%order_expired_unfilled%'
             ORDER BY entry_date DESC
         """).fetchall()
         _db_conn.close()
