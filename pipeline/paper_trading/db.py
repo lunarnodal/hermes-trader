@@ -12,11 +12,12 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+from config import PAPER_DB
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 DB_PATH = Path(os.environ.get("PAPER_DB_PATH",
-               "/home/trading/trading-ai/data/paper_trading.db"))
+               str(PAPER_DB)))
 
 log = logging.getLogger(__name__)
 

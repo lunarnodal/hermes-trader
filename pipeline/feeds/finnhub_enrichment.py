@@ -22,12 +22,13 @@ from dotenv import load_dotenv
 load_dotenv(_Path(__file__).parent.parent / ".env")
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from config import ENRICHMENT_DB
 
 log = logging.getLogger(__name__)
 
 FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "")
 BASE_URL      = "https://finnhub.io/api/v1"
-CACHE_DB      = Path("/home/trading/trading-ai/data/enrichment_cache.db")
+CACHE_DB      = ENRICHMENT_DB
 CACHE_TTL_HOURS = 6  # refresh every 6 hours
 
 

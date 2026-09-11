@@ -25,15 +25,16 @@ import sys
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from collections import defaultdict
+from config import LESSONS_DB, PAPER_DB, PORTFOLIO_DB, RULES_DB
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 log = logging.getLogger(__name__)
 
-PAPER_DB    = Path("/home/trading/trading-ai/data/paper_trading.db")
-RULES_DB    = Path("/home/trading/trading-ai/data/rules.db")
-LESSONS_DB  = Path("/home/trading/trading-ai/data/lessons.db")
-PORTFOLIO_DB = Path("/home/trading/trading-ai/data/portfolio.db")
+PAPER_DB    = PAPER_DB
+RULES_DB    = RULES_DB
+LESSONS_DB  = LESSONS_DB
+PORTFOLIO_DB = PORTFOLIO_DB
 REPORTS_DIR = Path("/mnt/qnap/timeseries/reports")
 
 SPARK_HOST  = os.getenv("SPARK_LLAMA_HOST",

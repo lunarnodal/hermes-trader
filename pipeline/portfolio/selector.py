@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 import sys
+from config import TICKERS_DB
 
 try:
     import sys as _sys
@@ -244,7 +245,7 @@ def get_primary_sector(ticker: str) -> str | None:
     """Get primary sector for a ticker from our DB"""
     try:
         import sqlite3
-        conn = sqlite3.connect("/home/trading/trading-ai/data/tickers.db")
+        conn = sqlite3.connect(str(TICKERS_DB))
         row  = conn.execute(
             "SELECT sector FROM tickers WHERE ticker = ?", (ticker,)
         ).fetchone()
@@ -292,7 +293,7 @@ def is_sp500_or_nasdaq(ticker: str) -> bool:
     """Check if ticker is in our known universe (NASDAQ API loaded tickers)"""
     try:
         import sqlite3
-        conn = sqlite3.connect("/home/trading/trading-ai/data/tickers.db")
+        conn = sqlite3.connect(str(TICKERS_DB))
         row  = conn.execute(
             "SELECT ticker FROM tickers WHERE ticker = ?", (ticker,)
         ).fetchone()

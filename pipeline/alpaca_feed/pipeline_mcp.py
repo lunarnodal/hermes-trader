@@ -41,11 +41,7 @@ log = logging.getLogger(__name__)
 
 mcp = FastMCP("Trading Pipeline", host="0.0.0.0", port=8101)
 
-PAPER_DB     = Path("/home/trading/trading-ai/data/paper_trading.db")
-PORTFOLIO_DB = Path("/home/trading/trading-ai/data/portfolio.db")
-RULES_DB     = Path("/home/trading/trading-ai/data/rules.db")
-LESSONS_DB   = Path("/home/trading/trading-ai/data/lessons.db")
-INSTRUMENT_DB  = Path("/home/trading/trading-ai/data/trading_pipeline.db")
+from config import PAPER_DB, PORTFOLIO_DB, RULES_DB, LESSONS_DB, TRADING_DB as INSTRUMENT_DB
 
 
 
@@ -1025,7 +1021,7 @@ def get_pipeline_health() -> str:
 
     # Rule status breakdown
     try:
-        rules_conn = sqlite3.connect("/home/trading/trading-ai/data/rules.db")
+        rules_conn = sqlite3.connect(str(RULES_DB))
         rule_status = rules_conn.execute(
             "SELECT status, COUNT(*) FROM inference_rules GROUP BY status"
         ).fetchall()
@@ -1036,7 +1032,7 @@ def get_pipeline_health() -> str:
 
     # Indirect dependencies count
     try:
-        lessons_conn = sqlite3.connect("/home/trading/trading-ai/data/lessons.db")
+        lessons_conn = sqlite3.connect(str(LESSONS_DB))
         dep_count = lessons_conn.execute(
             "SELECT COUNT(*) FROM indirect_dependencies"
         ).fetchone()[0]
@@ -1140,7 +1136,7 @@ def get_indirect_dependencies(limit: int = 30) -> str:
     Use this during causality analysis to avoid proposing duplicate rules.
     """
     try:
-        conn = sqlite3.connect("/home/trading/trading-ai/data/lessons.db")
+        conn = sqlite3.connect(str(LESSONS_DB))
         rows = conn.execute("""
             SELECT id, from_entity, to_entity, relationship, confidence, occurrences, last_seen
             FROM indirect_dependencies
@@ -1231,7 +1227,7 @@ def get_sector_trim() -> str:
     """
     try:
         import sqlite3
-        conn = sqlite3.connect("/home/trading/trading-ai/data/paper_trading.db")
+        conn = sqlite3.connect(str(PAPER_DB))
         rows = conn.execute("""
             SELECT sector, ltft, stft, learning_rate, updated_at
             FROM sector_trim

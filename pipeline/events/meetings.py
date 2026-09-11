@@ -11,8 +11,9 @@ import re
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from config import EVENTS_DB
 
-DB_PATH = Path('/home/trading/trading-ai/data/events.db')
+DB_PATH = EVENTS_DB
 log = logging.getLogger(__name__)
 
 # Meeting detection patterns

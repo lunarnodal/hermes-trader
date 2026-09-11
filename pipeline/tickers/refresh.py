@@ -3,8 +3,9 @@
 import requests, sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
+from config import TICKERS_DB
 
-DB_PATH = Path('/home/trading/trading-ai/data/tickers.db')
+DB_PATH = TICKERS_DB
 
 resp = requests.get(
     "https://api.nasdaq.com/api/screener/stocks",

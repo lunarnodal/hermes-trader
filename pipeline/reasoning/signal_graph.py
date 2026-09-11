@@ -19,10 +19,11 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
+from config import LESSONS_DB
 
 log = logging.getLogger(__name__)
 
-LESSONS_DB = Path("/home/trading/trading-ai/data/lessons.db")
+LESSONS_DB = LESSONS_DB
 
 # ─── Static dependency graph ──────────────────────────────────────────────────
 # Known market relationships that don't need to be learned

@@ -15,13 +15,14 @@ import sqlite3
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
+from config import ENRICHMENT_DB
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 log = logging.getLogger(__name__)
 
 FINNHUB_TOKEN = os.getenv("FINNHUB_TOKEN", "")
 BASE_URL      = "https://finnhub.io/api/v1"
-CACHE_DB      = Path("/home/trading/trading-ai/data/enrichment_cache.db")
+CACHE_DB      = ENRICHMENT_DB
 
 
 def get_earnings_date(ticker: str) -> date | None:

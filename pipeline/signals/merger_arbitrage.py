@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from alpaca_feed.data import get_live_prices
+from config import LESSONS_DB
 
 def fetch_current_price(ticker: str) -> float | None:
     """Fetch current price for a single ticker via Alpaca feed."""
@@ -511,7 +512,7 @@ def enrich_with_dependency_graph(signal: dict) -> list[dict]:
 
     # Load indirect dependencies from lessons.db
     try:
-        lessons_db = Path("/home/trading/trading-ai/data/lessons.db")
+        lessons_db = LESSONS_DB
         conn = sqlite3.connect(str(lessons_db))
         rows = conn.execute("""
             SELECT from_entity, to_entity, relationship, confidence, occurrences

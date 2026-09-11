@@ -20,12 +20,13 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .calibration import calculate_adjustment
+from config import LESSONS_DB, PAPER_DB, RULES_DB
 
 log = logging.getLogger(__name__)
 
-PAPER_DB   = Path("/home/trading/trading-ai/data/paper_trading.db")
-LESSONS_DB = Path("/home/trading/trading-ai/data/lessons.db")
-RULES_DB   = Path("/home/trading/trading-ai/data/rules.db")
+PAPER_DB   = PAPER_DB
+LESSONS_DB = LESSONS_DB
+RULES_DB   = RULES_DB
 
 # Organic sector → ETF mapping for momentum gate
 # Covers both canonical sectors and organic tags discovered in signal corpus
@@ -311,7 +312,7 @@ def _get_alltime_sector_stats_with_cache(sector: str) -> dict:
         if now < expires_at:
             return stats
 
-    PAPER_DB = Path("/home/trading/trading-ai/data/paper_trading.db")
+    PAPER_DB = PAPER_DB
     conn = sqlite3.connect(PAPER_DB)
     stats = _get_alltime_sector_stats(conn, sector)
     conn.close()

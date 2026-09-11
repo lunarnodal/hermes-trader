@@ -18,13 +18,14 @@ import logging
 import requests
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
+from config import PORTFOLIO_DB
 
 log = logging.getLogger(__name__)
 
 YF_BASE        = "https://query1.finance.yahoo.com/v8/finance/chart"
 CASH_ETF       = "BIL"   # change to SGOV if preferred
 RESERVE_PCT    = 0.10    # keep 10% as true cash reserve (matches CONFIG)
-DB_PATH        = Path("/home/trading/trading-ai/data/portfolio.db")
+DB_PATH        = PORTFOLIO_DB
 
 
 # Current T-bill yields (update periodically as Fed rates change)

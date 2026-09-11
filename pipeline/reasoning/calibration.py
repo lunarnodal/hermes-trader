@@ -10,10 +10,11 @@ import sqlite3
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
+from config import PAPER_DB
 
 log = logging.getLogger(__name__)
 
-PAPER_DB = Path("/home/trading/trading-ai/data/paper_trading.db")
+PAPER_DB = PAPER_DB
 
 # Minimum predictions needed before applying calibration
 MIN_SAMPLE_SIZE = 5

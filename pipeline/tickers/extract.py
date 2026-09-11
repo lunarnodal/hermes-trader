@@ -14,11 +14,12 @@ import os
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
+from config import TICKERS_DB
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 DB_PATH    = Path(os.environ.get("TICKER_DB_PATH",
-             "/home/trading/trading-ai/data/tickers.db"))
+             str(TICKERS_DB)))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://172.29.10.225:11434")
 
 log = logging.getLogger(__name__)

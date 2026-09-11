@@ -10,7 +10,7 @@ Usage (standalone backfill):
     import sys; sys.path.insert(0, '/home/sam/.hermes/kanban/workspaces/t_be5df5a0')
     from explain import backfill_explanations, init_explainability_db
     from pathlib import Path
-    DB = Path('/home/trading/trading-ai/data/paper_trading.db')
+    DB = PAPER_DB
     init_explainability_db(str(DB))
     backfill_explanations(str(DB))
     print('Done')
@@ -24,6 +24,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from config import PAPER_DB
 
 # ── SQL Schema ──────────────────────────────────────────────────────────────
 
@@ -578,7 +579,7 @@ def get_recent_explanations(db_path: str, limit: int = 20) -> list[dict]:
 if __name__ == "__main__":
     import sys
 
-    DB = sys.argv[1] if len(sys.argv) > 1 else "/home/trading/trading-ai/data/paper_trading.db"
+    DB = sys.argv[1] if len(sys.argv) > 1 else str(PAPER_DB)
     if not Path(DB).exists():
         print(f"DB not found: {DB}")
         sys.exit(1)

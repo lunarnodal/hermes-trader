@@ -19,12 +19,13 @@ from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
                           get_cash_balance, get_portfolio_value, get_positions_value,
                           CONFIG as PORT_CONFIG)
 from qdrant_client import QdrantClient
+from config import PAPER_DB, RULES_DB
 
 app = Flask(__name__)
 
 PAPER_DB  = Path(os.environ.get("PAPER_DB_PATH",
-            "/home/trading/trading-ai/data/paper_trading.db"))
-RULES_DB  = Path("/home/trading/trading-ai/data/rules.db")
+            str(PAPER_DB)))
+RULES_DB  = RULES_DB
 SIGNALS_DIR = Path("/mnt/qnap/timeseries/signals")
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
