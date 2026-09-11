@@ -708,8 +708,11 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     cash      = get_cash_balance(conn)
     port_val  = get_portfolio_value(conn)
 
+    pos_val   = get_positions_value(conn)
+    theta_res = port_val - cash - pos_val
     log.info(f"Portfolio: ${cash:,.2f} cash + "
-             f"${port_val - cash:,.2f} positions = "
+             f"${pos_val:,.2f} positions"
+             f"{f' + ${theta_res:,.2f} theta' if theta_res > 1 else ''} = "
              f"${port_val:,.2f} total")
 
     # Load recent predictions from paper trading DB
