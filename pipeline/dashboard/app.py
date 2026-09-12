@@ -10,7 +10,7 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, session
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -20,6 +20,9 @@ from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
 from qdrant_client import QdrantClient
 
 app = Flask(__name__)
+
+# Flask session config — required before any session access
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "trading-ai-dashboard-change-me")
 
 PAPER_DB  = Path(os.environ.get("PAPER_DB_PATH",
             "/home/trading/trading-ai/data/paper_trading.db"))
@@ -31,7 +34,12 @@ ACCOUNTS_CONFIG = {
     "PA3Y2DOOQXZW": "Hackathon",
 }
 
-CURRENT_ACCOUNT = os.environ.get("HERMES_DASHBOARD_ACCOUNT", "PA3I1CJSOEVO")
+DEFAULT_ACCOUNT = "PA3I1CJSOEVO"
+
+
+def _current_account():
+    """Return the session-scoped active account id."""
+    return session.get("current_account", DEFAULT_ACCOUNT)
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 
@@ -832,7 +840,7 @@ def index():
     return render_template_string(
         DASHBOARD_HTML,
         accounts=ACCOUNTS_CONFIG,
-        current_account=CURRENT_ACCOUNT,
+        current_account=_current_account(),
     )
 
 
@@ -1192,22 +1200,18 @@ def api_accounts():
     """Return the account list for the header dropdown."""
     return jsonify({
         'accounts': ACCOUNTS_CONFIG,
-        'current': CURRENT_ACCOUNT,
+        'current': _current_account(),
     })
 
 
 @app.route('/api/switch-account', methods=['POST'])
 def api_switch_account():
-    """Switch the active account and update env-backed DB paths."""
+    """Switch the active account — persisted in Flask session."""
     data = request.get_json() or {}
     account_id = data.get('account_id', '')
     if account_id not in ACCOUNTS_CONFIG:
         return jsonify({'error': 'Unknown account'}), 400
-    os.environ['HERMES_DASHBOARD_ACCOUNT'] = account_id
-    os.environ['PAPER_DB_PATH'] = str(PAPER_DB.parent / (account_id + '.db'))
-    pp = Path(os.environ.get('PORTFOLIO_DB_PATH',
-        str(PAPER_DB.parent / 'portfolio.db'))).parent
-    os.environ['PORTFOLIO_DB_PATH'] = str(pp / (account_id + '.db'))
+    session['current_account'] = account_id
     return jsonify({'success': True, 'account_id': account_id})
 
 
