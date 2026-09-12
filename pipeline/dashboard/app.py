@@ -10,23 +10,28 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paper_trading.db import init_db, get_performance_summary
 from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
-                          get_cash_balance, get_portfolio_value, get_positions_value,
-                          CONFIG as PORT_CONFIG)
+                          get_cash_balance, get_portfolio_value, CONFIG as PORT_CONFIG)
 from qdrant_client import QdrantClient
-from config import PAPER_DB, RULES_DB
 
 app = Flask(__name__)
 
 PAPER_DB  = Path(os.environ.get("PAPER_DB_PATH",
-            str(PAPER_DB)))
-RULES_DB  = RULES_DB
+            "/home/trading/trading-ai/data/paper_trading.db"))
+RULES_DB  = Path("/home/trading/trading-ai/data/rules.db")
 SIGNALS_DIR = Path("/mnt/qnap/timeseries/signals")
+
+ACCOUNTS_CONFIG = {
+    "PA3I1CJSOEVO": "Organic",
+    "PA3Y2DOOQXZW": "Hackathon",
+}
+
+CURRENT_ACCOUNT = os.environ.get("HERMES_DASHBOARD_ACCOUNT", "PA3I1CJSOEVO")
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 
@@ -36,70 +41,71 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading AI Dashboard</title>
-<meta http-equiv="refresh" content="300">
+<meta http-equiv="refresh" content="60">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
+.account-select{background:#1f2937;color:#e6edf3;border:1px solid #374151;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;outline:none;min-width:130px}
+.account-select:focus{border-color:#10B981}
+.account-select option{background:#1f2937}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-       background:#111827;color:#e6edf3;min-height:100vh;font-size:13px}
-  a{color:#10B981}
-  .header{background:#111827;border-bottom:1px solid #1f2937;
+       background:#0d1117;color:#e6edf3;min-height:100vh;font-size:13px}
+  a{color:#58a6ff}
+  .header{background:#161b22;border-bottom:1px solid #30363d;
           padding:12px 20px;display:flex;align-items:center;justify-content:space-between;
           position:sticky;top:0;z-index:100}
   .header h1{font-size:16px;font-weight:600}
   .header-right{display:flex;align-items:center;gap:12px}
   .status-badge{display:flex;align-items:center;gap:6px;font-size:12px;
                 padding:4px 10px;border-radius:20px;font-weight:500}
-  .status-active{background:#064e3b;color:#10B981;border:1px solid #059669}
-  .status-macro{background:#451a03;color:#FBBF24;border:1px solid #D97706}
-  .status-breaker{background:#450a0a;color:#EF4444;border:1px solid #DC2626}
+  .status-active{background:#1a3a2a;color:#3fb950;border:1px solid #238636}
+  .status-macro{background:#3a2a0a;color:#d29922;border:1px solid #9e6a03}
+  .status-breaker{background:#3a1a1a;color:#f85149;border:1px solid #da3633}
   .status-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
   .last-run{font-size:11px;color:#8b949e}
   .metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:16px 20px}
-  .metric{background:#111827;border:1px solid #1f2937;border-radius:8px;padding:14px}
+  .metric{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}
   .metric-label{font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px}
   .metric-value{font-size:22px;font-weight:600}
   .metric-sub{font-size:11px;color:#8b949e;margin-top:3px}
-  .green{color:#10B981} .red{color:#EF4444} .yellow{color:#FBBF24} .blue{color:#10B981} .gray{color:#8b949e}
+  .green{color:#3fb950} .red{color:#f85149} .yellow{color:#d29922} .blue{color:#58a6ff} .gray{color:#8b949e}
   .grid{display:grid;gap:12px;padding:0 20px 20px}
   .grid-2{grid-template-columns:1fr 1fr}
   .grid-3{grid-template-columns:1fr 1fr 1fr}
   .grid-1-2{grid-template-columns:1fr 2fr}
   .grid-2-1{grid-template-columns:2fr 1fr}
-  .card{background:#111827;border:1px solid #1f2937;border-radius:8px;padding:16px;
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;
         cursor:grab;user-select:none;transition:border-color 0.15s}
   .card:active{cursor:grabbing}
-  .card:hover{border-color:#059669}
-  .card:focus-within{border-color:#10B981}
-  .card.drag-over{border-color:#10B981;background:#111827}
-  .card.dragging{opacity:0.4;border-color:#10B981}
+  .card.drag-over{border-color:#58a6ff;background:#1c2128}
+  .card.dragging{opacity:0.4;border-color:#58a6ff}
   .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
   .card-title{font-size:13px;font-weight:600;color:#e6edf3}
-  .drag-handle{font-size:16px;color:#1f2937;cursor:grab;line-height:1}
+  .drag-handle{font-size:16px;color:#30363d;cursor:grab;line-height:1}
   .drag-handle:hover{color:#8b949e}
   table{width:100%;border-collapse:collapse}
   th{font-size:11px;color:#8b949e;font-weight:400;text-align:left;
-     padding:0 0 6px;border-bottom:1px solid #111827}
-  td{padding:6px 0;border-bottom:1px solid #111827;vertical-align:middle}
+     padding:0 0 6px;border-bottom:1px solid #21262d}
+  td{padding:6px 0;border-bottom:1px solid #21262d;vertical-align:middle}
   tr:last-child td{border-bottom:none}
   .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500}
-  .badge-bull{background:#064e3b;color:#10B981}
-  .badge-bear{background:#450a0a;color:#EF4444}
-  .badge-neut{background:#111827;color:#8b949e;border:1px solid #1f2937}
-  .badge-mix{background:#422006;color:#FBBF24}
-  .correct{color:#10B981} .wrong{color:#EF4444} .pending{color:#8b949e}
+  .badge-bull{background:#1a3a2a;color:#3fb950}
+  .badge-bear{background:#3a1a1a;color:#f85149}
+  .badge-neut{background:#1c2128;color:#8b949e;border:1px solid #30363d}
+  .badge-mix{background:#2a2a1a;color:#d29922}
+  .correct{color:#3fb950} .wrong{color:#f85149} .pending{color:#8b949e}
   .timestamp{color:#8b949e;font-size:11px}
-  .bar-bg{background:#111827;border:1px solid #1f2937;border-radius:3px;height:6px;flex:1}
+  .bar-bg{background:#21262d;border-radius:3px;height:6px;flex:1}
   .bar-fill{border-radius:3px;height:6px;transition:width 0.3s}
   details summary{cursor:pointer;font-size:12px;color:#8b949e;padding:8px 0;
-                  border-top:1px solid #111827;margin-top:8px;list-style:none}
+                  border-top:1px solid #21262d;margin-top:8px;list-style:none}
   details summary::-webkit-details-marker{display:none}
   details summary::before{content:"▶ ";font-size:10px}
   details[open] summary::before{content:"▼ "}
   .activity-item{display:flex;justify-content:space-between;align-items:center;
-                 padding:5px 0;border-bottom:1px solid #111827;font-size:12px}
+                 padding:5px 0;border-bottom:1px solid #21262d;font-size:12px}
   .activity-item:last-child{border-bottom:none}
-  .pred-card{background:#111827;border:1px solid #1f2937;border-radius:6px;
+  .pred-card{background:#0d1117;border:1px solid #21262d;border-radius:6px;
              padding:8px 12px;margin-bottom:6px}
   .pred-row{display:flex;justify-content:space-between;align-items:center}
   .pred-sector{font-size:12px;color:#e6edf3;margin-bottom:4px}
@@ -120,6 +126,11 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   </div>
   <div class="header-right">
     <span class="last-run" id="lastRun">Loading...</span>
+    <select class="account-select" id="accountSelect" onchange="switchAccount(this.value)" title="Switch display to another Alpaca account">
+      {% for id, name in accounts.items() %}
+      <option value="{{ id }}"{{ " selected" if id == current_account else "" }}>{{ name }}</option>
+      {% endfor %}
+    </select>
     <span class="status-badge status-active" id="statusBadge">
       <span class="status-dot"></span>
       <span id="statusText">Trading active</span>
@@ -169,8 +180,8 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="legend">
-        <span><span class="legend-dot" style="background:#10B981"></span>Value</span>
-        <span><span class="legend-dot" style="background:#1f2937;border:1px dashed #8b949e"></span>$50k baseline</span>
+        <span><span class="legend-dot" style="background:#58a6ff"></span>Value</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>$50k baseline</span>
       </div>
       <div class="chart-wrap" style="height:160px">
         <canvas id="pnlChart" role="img" aria-label="Portfolio value over time">Portfolio value chart</canvas>
@@ -183,8 +194,8 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="legend">
-        <span><span class="legend-dot" style="background:#EF4444"></span>Win rate</span>
-        <span><span class="legend-dot" style="background:#1f2937;border:1px dashed #8b949e"></span>50% target</span>
+        <span><span class="legend-dot" style="background:#f85149"></span>Win rate</span>
+        <span><span class="legend-dot" style="background:#30363d;border:1px dashed #8b949e"></span>50% target</span>
       </div>
       <div class="chart-wrap" style="height:160px">
         <canvas id="winChart" role="img" aria-label="Win rate trend over time">Win rate chart</canvas>
@@ -203,7 +214,6 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           <tr>
             <th>Ticker</th><th>Sector</th><th>Shares</th>
             <th style="text-align:right">Entry</th>
-            <th style="text-align:right">Value</th>
             <th style="text-align:right">Price</th>
             <th style="text-align:right">P&L</th>
             <th style="text-align:right">Stop</th>
@@ -212,7 +222,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           </tr>
         </thead>
         <tbody id="positionsBody">
-          <tr><td colspan="9" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
+          <tr><td colspan="8" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -318,14 +328,6 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
         </tbody>
       </table>
     </div>
-  <div class="card" draggable="true" id="card-theta">
-    <div class="card-header">
-      <span class="card-title">Theta gang</span>
-      <span class="drag-handle" title="Drag to reorder">⠿</span>
-    </div>
-    <div id="thetaCard">
-      <div class="gray" style="font-size:12px">Loading...</div>
-    </div>
   </div>
 
 </div>
@@ -343,7 +345,16 @@ function dirBadge(d) {
 }
 
 let pnlChartInst, winChartInst, sectorChartInst, sentChartInst;
-const SECTOR_COLORS = ['#10B981','#10B981','#FBBF24','#EF4444','#bc8cff','#79c0ff','#56d364','#ffa657'];
+const SECTOR_COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0ff','#56d364','#ffa657'];
+
+async function switchAccount(accountId) {
+  await fetch("/api/switch-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account_id: accountId }),
+  });
+  location.reload();
+}
 
 async function loadData() {
   const data = await fetch('/api/data').then(r => r.json());
@@ -386,9 +397,9 @@ async function loadData() {
     statusText.textContent = `VIX ${vix.vix?.toFixed(1)} — reduced position sizes`;
   } else if (!marketOpen) {
     badge.className = 'status-badge';
-    badge.style.background = '#111827';
+    badge.style.background = '#1c2128';
     badge.style.color = '#8b949e';
-    badge.style.border = '1px solid #1f2937';
+    badge.style.border = '1px solid #30363d';
     statusText.textContent = isWeekday ? 'Market closed' : 'Weekend — market closed';
   } else if (pausedSectors.length > 0) {
     badge.className = 'status-badge status-macro';
@@ -413,9 +424,6 @@ async function loadData() {
   document.getElementById('mReturn').textContent = fmtPct(retPct) + ' all time';
   document.getElementById('mCash').textContent = fmt$(p.cash||0);
   document.getElementById('mCashPct').textContent = cashPct + '% of portfolio';
-  // Show positions value under open positions count
-  document.getElementById('mSlots').textContent =
-    `${p.open_count||0}/${maxPos} slots · ${fmt$(p.positions_value||0)} deployed`;
 
   const wr = data.perf?.win_rate || 0;
   document.getElementById('mWinRate').innerHTML =
@@ -424,6 +432,7 @@ async function loadData() {
     `${data.perf?.correct||0}/${data.perf?.verified||0} verified`;
 
   document.getElementById('mPositions').textContent = p.open_count || 0;
+  document.getElementById('mSlots').textContent = `${p.open_count||0}/${maxPos} slots used`;
   document.getElementById('mVectors').textContent = (data.qdrant_count||0).toLocaleString();
   document.getElementById('mSignals24').textContent = `+${data.signals_24h||0} today`;
 
@@ -448,14 +457,14 @@ async function loadData() {
         {
           label: 'Portfolio',
           data: pnlVals,
-          borderColor: '#10B981',
-          backgroundColor: 'rgba(16,185,129,0.08)',
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.08)',
           fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2
         },
         {
           label: 'Baseline',
           data: pnlLabels.map(() => 50000),
-          borderColor: '#1f2937',
+          borderColor: '#30363d',
           borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
         }
       ]
@@ -465,10 +474,10 @@ async function loadData() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 8 },
-             grid: { color: '#1f2937' } },
+             grid: { color: '#21262d' } },
         y: { ticks: { color: '#8b949e', font: { size: 10 },
                       callback: v => fmtK(v) },
-             grid: { color: '#1f2937' } }
+             grid: { color: '#21262d' } }
       }
     }
   });
@@ -498,15 +507,15 @@ async function loadData() {
         {
           label: 'Win rate',
           data: wkRates,
-          borderColor: '#EF4444',
-          backgroundColor: 'rgba(239,68,68,0.08)',
+          borderColor: '#f85149',
+          backgroundColor: 'rgba(248,81,73,0.08)',
           fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
           spanGaps: true
         },
         {
           label: '50% target',
           data: wkLabels.map(() => 50),
-          borderColor: '#1f2937',
+          borderColor: '#30363d',
           borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
         }
       ]
@@ -516,11 +525,11 @@ async function loadData() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { color: '#8b949e', font: { size: 10 } },
-             grid: { color: '#1f2937' } },
+             grid: { color: '#21262d' } },
         y: { min: 0, max: 100,
              ticks: { color: '#8b949e', font: { size: 10 },
                       callback: v => v + '%' },
-             grid: { color: '#1f2937' } }
+             grid: { color: '#21262d' } }
       }
     }
   });
@@ -529,43 +538,25 @@ async function loadData() {
   const positions = data.positions || [];
   const posBody = document.getElementById('positionsBody');
   if (!positions.length) {
-    posBody.innerHTML = '<tr><td colspan="9" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
+    posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
   } else {
     posBody.innerHTML = positions.map(p => {
-      const useLive    = p.live_price != null;
-      const mktOpen    = p.market_open;
-      const pnl        = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
-      const ahPnl      = p.ah_pnl_pct;
-      const pnlCls     = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
-      const ahPnlCls   = ahPnl != null ? (ahPnl > 0 ? 'green' : ahPnl < 0 ? 'red' : 'gray') : '';
-      const tiers      = p.tiers_triggered || 0;
-      const tierBadge  = tiers > 0
-        ? `<span style="background:#1a2a3a;color:#10B981;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
+      const useLive  = p.live_price != null;
+      const pnl      = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
+      const liveTag  = useLive
+        ? '<span style="font-size:9px;color:#3fb950;margin-left:3px">●</span>'
+        : '';
+      const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
+      const tiers = p.tiers_triggered || 0;
+      const tierBadge = tiers > 0
+        ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
         : '—';
-
-      // Price display — show regular close + after-hours when market closed
-      let priceCell;
-      if (mktOpen) {
-        // Market open — show live price with green dot
-        priceCell = `<span style="color:#10B981">●</span> ${fmt$(p.live_price)}`;
-      } else if (p.regular_close != null && p.after_hours != null) {
-        // After hours — show regular close and AH price
-        priceCell = `
-          <div style="font-size:11px;color:#8b949e">Close: ${fmt$(p.regular_close)}</div>
-          <div style="font-size:11px;color:#f59e0b">AH: ${fmt$(p.after_hours)}
-            ${ahPnl != null ? `<span class="${ahPnlCls}">(${fmtPct(ahPnl)})</span>` : ''}
-          </div>`;
-      } else {
-        priceCell = fmt$(p.live_price || p.current_price || 0);
-      }
-
       return `<tr>
-        <td style="font-weight:600">${p.ticker}</td>
+        <td style="font-weight:600">${p.ticker}${liveTag}</td>
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
-        <td style="text-align:right;color:#8b949e">${fmt$(p.live_value||p.current_value||0)}</td>
-        <td style="text-align:right">${priceCell}</td>
+        <td style="text-align:right" class="${pnlCls}">${useLive ? fmt$(p.live_price) : fmt$(p.current_price||0)}</td>
         <td style="text-align:right" class="${pnlCls}">${fmtPct(pnl)}</td>
         <td style="text-align:right" class="gray">${fmt$(p.stop_loss)}</td>
         <td style="text-align:center">${tierBadge}</td>
@@ -583,7 +574,7 @@ async function loadData() {
   const cashVal = data.portfolio?.cash || 0;
   const sectorLabels = [...Object.keys(positionsBySector), 'Cash'];
   const sectorVals   = [...Object.values(positionsBySector), cashVal];
-  const sectorColors = SECTOR_COLORS.slice(0, sectorLabels.length - 1).concat(['#422006']);
+  const sectorColors = SECTOR_COLORS.slice(0, sectorLabels.length - 1).concat(['#21262d']);
 
   if (sectorChartInst) sectorChartInst.destroy();
   sectorChartInst = new Chart(document.getElementById('sectorChart'), {
@@ -674,7 +665,7 @@ async function loadData() {
   const maxSector = Math.max(...sectors.map(s => s.count), 1);
   document.getElementById('sectorBars').innerHTML = sectors.map(s => {
     const w = Math.round(s.count / maxSector * 100);
-    const col = s.bias === 'bullish' ? '#10B981' : s.bias === 'bearish' ? '#EF4444' : '#8b949e';
+    const col = s.bias === 'bullish' ? '#3fb950' : s.bias === 'bearish' ? '#f85149' : '#8b949e';
     const breaker = breakers[s.sector] || {};
     const paused  = breaker.paused;
     const stops   = breaker.stops || 0;
@@ -688,12 +679,12 @@ async function loadData() {
     const statusDot = paused
       ? `<span title="${stops} stop losses this week — entries paused"
            style="display:inline-flex;align-items:center;gap:3px;
-                  background:#450a0a;color:#EF4444;font-size:10px;
+                  background:#3a1a1a;color:#f85149;font-size:10px;
                   padding:1px 5px;border-radius:3px;margin-left:4px;">
            🔴 paused</span>`
       : `<span title="${stops} stop losses this week — entries open"
            style="display:inline-flex;align-items:center;gap:3px;
-                  color:#10B981;font-size:10px;margin-left:4px;">●</span>`;
+                  color:#3fb950;font-size:10px;margin-left:4px;">●</span>`;
     return `<div class="sector-bar">
       <span class="sector-name" style="width:110px">${sectorLabel}${statusDot}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
@@ -706,7 +697,7 @@ async function loadData() {
   const maxTicker = Math.max(...tickers.map(t => t.count), 1);
   document.getElementById('tickerBars').innerHTML = tickers.map(t => {
     const w = Math.round(t.count / maxTicker * 100);
-    const col = t.bias === 'bullish' ? '#10B981' : t.bias === 'bearish' ? '#EF4444' : '#8b949e';
+    const col = t.bias === 'bullish' ? '#3fb950' : t.bias === 'bearish' ? '#f85149' : '#8b949e';
     return `<div class="sector-bar">
       <span class="sector-name" style="font-weight:600">${t.ticker}</span>
       <div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div>
@@ -723,7 +714,7 @@ async function loadData() {
       labels: ['Bullish', 'Bearish', 'Neutral'],
       datasets: [{
         data: [sent.bullish||0, sent.bearish||0, sent.neutral||0],
-        backgroundColor: ['#10B981', '#EF4444', '#1f2937'],
+        backgroundColor: ['#3fb950', '#f85149', '#30363d'],
         borderWidth: 0
       }]
     },
@@ -741,8 +732,8 @@ async function loadData() {
   // VIX display in sentiment card
   const vixDisplay = document.getElementById('vixDisplay');
   if (vixDisplay && vix.vix) {
-    const vixColor = vix.action === 'pause' ? '#EF4444' : 
-                     vix.action === 'reduce' ? '#e3b341' : '#10B981';
+    const vixColor = vix.action === 'pause' ? '#f85149' : 
+                     vix.action === 'reduce' ? '#e3b341' : '#3fb950';
     vixDisplay.innerHTML = `<span style="color:${vixColor};font-weight:600">VIX ${vix.vix.toFixed(1)}</span> <span style="color:#8b949e;font-size:11px">— ${vix.reason.split('—')[1]?.trim() || vix.action}</span>`;
   }
 
@@ -757,55 +748,8 @@ async function loadData() {
         <td class="timestamp">${c.date}</td>
       </tr>`).join('')
     : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>';
-  renderThetaCard(data.theta);
 }
 
-
-// Theta card renderer
-function renderThetaCard(theta) {
-  if (!theta || !theta.aggregate) {
-    document.getElementById('thetaCard').innerHTML =
-      '<div class="gray" style="font-size:12px">No theta data</div>';
-    return;
-  }
-  const agg = theta.aggregate;
-  const fmtPrem = v => '$' + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const statsHtml = '<div style="display:flex;gap:16px;margin-bottom:12px">' +
-    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:#10B981">'+agg.total_count+'</div><div style="font-size:11px;color:#8b949e">Open positions</div></div>' +
-    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:#fbbf24">'+fmtPrem(agg.total_premium)+'</div><div style="font-size:11px;color:#8b949e">Total premium</div></div>' +
-    '<div style="flex:1;text-align:center"><div style="font-size:18px;font-weight:700;color:'+(agg.assignment_risk_count>0?'#EF4444':'#10B981')+'">'+agg.assignment_risk_count+'</div><div style="font-size:11px;color:#8b949e">Assignment risk</div></div>' +
-    '</div>';
-  function posRows(positions, accountLabel) {
-    if (!positions || positions.length === 0) {
-      return '<div style="font-size:11px;color:#8b949e;padding:6px 0">'+accountLabel+': No positions</div>';
-    }
-    const rows = positions.map(function(p) {
-      const dte = Math.max(0, Math.ceil((new Date(p.expiry)-new Date())/86400000));
-      const dteColor = dte<=5?'#EF4444':dte<=14?'#e3b341':'#10B981';
-      const riskColor = p.assignment_risk?'#EF4444':'#8b949e';
-      const fillColor = p.fill_status==='filled'?'#10B981':p.fill_status==='pending'?'#f59e0b':p.fill_status==='expired'?'#EF4444':'#8b949e';
-      const fillLabel = p.fill_status==='filled'?'●':p.fill_status==='pending'?'⏳':p.fill_status==='expired'?'✕':'?';
-      const underlyingStr = p.underlying_price ? ' @ $'+p.underlying_price.toFixed(2) : '';
-      return '<tr style="border-bottom:1px solid #161b22">'+
-        '<td style="padding:3px 4px;font-weight:600"><span style="color:'+fillColor+'" title="'+p.fill_status+'">'+fillLabel+'</span> '+p.ticker+'</td>'+
-        '<td style="padding:3px 4px;color:#8b949e">'+(p.instrument_type==='covered_call'?'CC':'CSP')+'</td>'+
-        '<td style="text-align:right;padding:3px 4px">$'+p.strike.toFixed(0)+'<span style="font-size:10px;color:#8b949e">'+underlyingStr+'</span></td>'+
-        '<td style="text-align:right;padding:3px 4px;color:'+dteColor+'">'+dte+'d</td>'+
-        '<td style="text-align:right;padding:3px 4px;color:'+riskColor+'">'+fmtPrem(p.premium)+'</td>'+
-        '</tr>';
-    }).join('');
-    return '<div style="font-size:11px;color:#6e7681;margin:6px 0 3px">'+accountLabel+'</div>'+
-      '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
-      '<thead><tr style="border-bottom:1px solid #1f2937">'+
-      '<th style="text-align:left;padding:3px 4px">Ticker</th>'+
-      '<th style="text-align:left;padding:3px 4px">Type</th>'+
-      '<th style="text-align:right;padding:3px 4px">Strike</th>'+
-      '<th style="text-align:right;padding:3px 4px">DTE</th>'+
-      '<th style="text-align:right;padding:3px 4px">Premium</th>'+
-      '</tr></thead><tbody>'+rows+'</tbody></table>';
-  }
-  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.positions, 'Open Positions');
-}
 // Drag and drop
 let dragSrc = null;
 function initDrag() {
@@ -885,7 +829,11 @@ loadData();
 
 @app.route('/')
 def index():
-    return render_template_string(DASHBOARD_HTML)
+    return render_template_string(
+        DASHBOARD_HTML,
+        accounts=ACCOUNTS_CONFIG,
+        current_account=CURRENT_ACCOUNT,
+    )
 
 
 @app.route('/api/data')
@@ -1084,12 +1032,11 @@ def api_data():
             ORDER BY exit_date DESC LIMIT 10
         """).fetchall()
 
-        pos_value = round(get_positions_value(port_conn), 2)
         port_conn.close()
 
         data['portfolio'] = {
             'cash':          round(cash, 2),
-            'positions_value': pos_value,
+            'positions_value': round(port_value - cash, 2),
             'total_value':   round(port_value, 2),
             'starting':      starting,
             'return_pct':    round(ret_pct, 2),
@@ -1153,39 +1100,26 @@ def api_data():
     try:
         import sys as _sys
         _sys.path.insert(0, str(Path(__file__).parent.parent))
-        from alpaca_feed.data import get_extended_prices, is_market_open
+        from alpaca_feed.data import get_live_prices
         _symbols = [p['ticker'] for p in data.get('positions', [])
                     if p.get('ticker')]
         if _symbols:
-            _extended = get_extended_prices(_symbols)
-            _mkt_open = is_market_open()
+            _live = get_live_prices(_symbols)
             for pos in data.get('positions', []):
                 sym = pos.get('ticker')
-                if sym and sym in _extended:
-                    ext = _extended[sym]
-                    regular_close = ext.get('regular_close')
-                    after_hours   = ext.get('after_hours')
-                    display_price = regular_close if regular_close else after_hours
-                    pos['live_price']    = display_price
-                    pos['regular_close'] = regular_close
-                    pos['after_hours']   = after_hours
-                    pos['market_open']   = _mkt_open
-                    pos['price_source']  = 'live' if _mkt_open else 'after_hours'
+                if sym and sym in _live:
+                    live_price = _live[sym]
+                    pos['live_price']    = live_price
                     pos['live_pnl_pct']  = round(
-                        (display_price - pos['entry_price']) / pos['entry_price'] * 100, 2
-                    ) if display_price and pos.get('entry_price') else None
+                        (live_price - pos['entry_price']) / pos['entry_price'] * 100, 2
+                    ) if pos.get('entry_price') else None
                     pos['live_value']    = round(
-                        display_price * pos.get('shares', 0), 2
-                    ) if display_price else None
+                        live_price * pos.get('shares', 0), 2
+                    )
                     pos['live_pnl']      = round(
                         pos['live_value'] - pos.get('cost_basis', 0), 2
-                    ) if pos.get('live_value') else None
-                    if not _mkt_open and after_hours and pos.get('entry_price'):
-                        pos['ah_pnl_pct'] = round(
-                            (after_hours - pos['entry_price']) / pos['entry_price'] * 100, 2
-                        )
-                        pos['ah_value']   = round(after_hours * pos.get('shares', 0), 2)
-                        pos['ah_pnl']     = round(pos['ah_value'] - pos.get('cost_basis', 0), 2)
+                    )
+                    pos['price_source']  = 'live'
                 else:
                     pos['price_source']  = 'snapshot'
     except Exception as e:
@@ -1251,110 +1185,30 @@ def api_data():
     except Exception as e:
         data['cash_yield'] = {}
 
-
-    # Theta gang — pull from pipeline DB (source of truth)
-    try:
-        import sqlite3 as _sql
-        from datetime import datetime as _dt, timezone as _tz
-        from portfolio.db import DB_PATH as _PORTFOLIO_DB_PATH
-        _db_conn = _sql.connect(str(_PORTFOLIO_DB_PATH))
-        _rows = _db_conn.execute("""
-            SELECT ticker, sector, instrument_type, strike, expiry,
-                   premium_collected, entry_date, option_symbol
-            FROM theta_positions
-            WHERE status = 'open'
-            AND notes NOT LIKE '%order_expired_unfilled%'
-            ORDER BY entry_date DESC
-        """).fetchall()
-        _db_conn.close()
-
-        theta_positions = []
-        for r in _rows:
-            ticker, sector, instrument_type, strike, expiry,                 premium, entry_date, option_symbol = r
-            try:
-                expiry_dt = _dt.strptime(expiry, "%Y-%m-%d").replace(tzinfo=_tz.utc)
-                dte = max(0, (expiry_dt - _dt.now(_tz.utc)).days)
-            except Exception:
-                dte = 0
-            # Assignment risk: underlying within 5% of strike
-            assignment_risk = False
-            fill_status = "unknown"
-            current_price = None
-            try:
-                from alpaca_feed.data import get_live_prices
-                prices = get_live_prices([ticker])
-                current_price = prices.get(ticker)
-                if current_price and instrument_type == "cash_secured_put":
-                    assignment_risk = current_price <= strike * 1.00  # only flag at or below strike
-            except Exception:
-                pass
-            # Check fill status from Alpaca if option_symbol available
-            try:
-                if option_symbol:
-                    from alpaca_feed.trading import get_trading_client
-                    _tc = get_trading_client()
-                    _orders = _tc.get_orders()
-                    for _o in _orders:
-                        if str(_o.symbol) == option_symbol:
-                            _status = str(_o.status).lower()
-                            if "filled" in _status:
-                                fill_status = "filled"
-                            elif "new" in _status or "pending" in _status or "accepted" in _status:
-                                fill_status = "pending"
-                            elif "cancelled" in _status or "expired" in _status:
-                                fill_status = "cancelled"
-                            break
-                    else:
-                        # Not in open orders — check closed orders for fill/expire
-                        try:
-                            from alpaca.trading.requests import GetOrdersRequest
-                            from alpaca.trading.enums import QueryOrderStatus
-                            _closed = _tc.get_orders(GetOrdersRequest(
-                                status=QueryOrderStatus.CLOSED, limit=20
-                            ))
-                            for _co in _closed:
-                                if str(_co.symbol) == option_symbol:
-                                    _cs = str(_co.status).lower()
-                                    if "filled" in _cs:
-                                        fill_status = "filled"
-                                    elif "expired" in _cs or "cancelled" in _cs:
-                                        fill_status = "expired"
-                                    break
-                            else:
-                                fill_status = "filled"  # assume filled if not found
-                        except Exception:
-                            fill_status = "unknown"
-            except Exception:
-                pass
-            theta_positions.append({
-                "ticker":          ticker,
-                "sector":          sector or "",
-                "instrument_type": instrument_type,
-                "strike":          strike,
-                "expiry":          expiry,
-                "dte":             dte,
-                "premium":         round(premium * 100, 2),  # per contract
-                "option_symbol":   option_symbol or "",
-                "assignment_risk": assignment_risk,
-                "fill_status":     fill_status,
-                "underlying_price": current_price,
-            })
-
-        total_premium = sum(p["premium"] for p in theta_positions)
-        assignment_risk_count = sum(1 for p in theta_positions if p["assignment_risk"])
-        data["theta"] = {
-            "positions": theta_positions,
-            "aggregate": {
-                "total_premium":         round(total_premium, 2),
-                "assignment_risk_count": assignment_risk_count,
-                "total_count":           len(theta_positions),
-            }
-        }
-    except Exception as e:
-        import logging as _logging; _logging.getLogger(__name__).warning(f"Theta positions unavailable: {e}")
-        data["theta"] = {}
-
     return jsonify(data)
+
+@app.route('/api/accounts')
+def api_accounts():
+    """Return the account list for the header dropdown."""
+    return jsonify({
+        'accounts': ACCOUNTS_CONFIG,
+        'current': CURRENT_ACCOUNT,
+    })
+
+
+@app.route('/api/switch-account', methods=['POST'])
+def api_switch_account():
+    """Switch the active account and update env-backed DB paths."""
+    data = request.get_json() or {}
+    account_id = data.get('account_id', '')
+    if account_id not in ACCOUNTS_CONFIG:
+        return jsonify({'error': 'Unknown account'}), 400
+    os.environ['HERMES_DASHBOARD_ACCOUNT'] = account_id
+    os.environ['PAPER_DB_PATH'] = str(PAPER_DB.parent / (account_id + '.db'))
+    pp = Path(os.environ.get('PORTFOLIO_DB_PATH',
+        str(PAPER_DB.parent / 'portfolio.db'))).parent
+    os.environ['PORTFOLIO_DB_PATH'] = str(pp / (account_id + '.db'))
+    return jsonify({'success': True, 'account_id': account_id})
 
 
 if __name__ == '__main__':

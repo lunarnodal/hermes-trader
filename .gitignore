@@ -51,3 +51,4 @@ pipeline/.env
 pipeline/.venv/
 data/
 data/tickers.db
+/logs/
