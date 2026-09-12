@@ -709,6 +709,23 @@ def generate_recommendations(predictions: list[dict],
                                  f"(have {stock['avg_conf']:.0%})")
                         continue
 
+            # ── Sector win-rate gate for theta-gang ──────────────────────────
+            # If sector win_rate is extremely weak, skip theta-gang too.
+            # Threshold is lower than equity hard_block (0.20 vs 0.35)
+            # because CSPs benefit from being wrong (premium decay).
+            THETA_MIN_WIN_RATE = 0.20
+            if sector_win_rate < THETA_MIN_WIN_RATE:
+                log.info(f"SKIP {ticker} — theta-gang: sector win_rate={sector_win_rate:.0%} "
+                         f"< {THETA_MIN_WIN_RATE:.0%} minimum for CSP")
+                _log_rejected_signal(
+                    sector=sector, query=query, direction=direction,
+                    raw_conf=confidence, adj_conf=adj_confidence,
+                    gate="theta_sector_block",
+                    reason=f"sector win_rate={sector_win_rate:.0%} < {THETA_MIN_WIN_RATE:.0%} theta minimum",
+                    sector_win_rate=sector_win_rate,
+                )
+                continue
+
             # ── Theta-gang eligibility gate ──────────────────────────────────
             from .db import THETA_CONFIG
             from reasoning.predict import compute_theta_eligibility_score as _theta_score
