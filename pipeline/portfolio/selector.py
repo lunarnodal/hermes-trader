@@ -719,7 +719,7 @@ def generate_recommendations(predictions: list[dict],
                          f"< {THETA_MIN_WIN_RATE:.0%} minimum for CSP")
                 _log_rejected_signal(
                     sector=sector, query=query, direction=direction,
-                    raw_conf=confidence, adj_conf=adj_confidence,
+                    raw_conf=confidence, adj_conf=confidence,
                     gate="theta_sector_block",
                     reason=f"sector win_rate={sector_win_rate:.0%} < {THETA_MIN_WIN_RATE:.0%} theta minimum",
                     sector_win_rate=sector_win_rate,
