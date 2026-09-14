@@ -54,3 +54,4 @@ data/tickers.db
 /logs/
 pipeline/dashboard/app.py.bak*
 pipeline/**/*.bak*
+pipeline/dashboard/app.py.before-emerald
