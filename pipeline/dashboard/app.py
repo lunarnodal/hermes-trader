@@ -765,8 +765,10 @@ async function loadData() {
         <td class="gray" style="font-size:11px">${c.reason?.split(' ')[0]||'—'}</td>
         <td class="timestamp">${c.date}</td>
       </tr>`).join('')
-    : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>
-  renderThetaCard(data.theta);';
+    : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>');
+
+  // Load theta card after all other data
+  renderThetaCard(data.theta);
 }
 
 // Theta card renderer
