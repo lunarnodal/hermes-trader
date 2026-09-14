@@ -34,7 +34,7 @@ SIGNALS_DIR = Path("/mnt/qnap/timeseries/signals")
 
 SPARK_HOST  = os.getenv("SPARK_LLAMA_HOST",
               os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083"))
-MODEL       = "deepseek-r1"
+MODEL       = os.getenv("REASONING_MODEL", "qwen3.6-27b")
 
 # Only analyze predictions above this confidence threshold
 MIN_CONFIDENCE_FOR_POSTMORTEM = 0.70
@@ -194,7 +194,8 @@ def call_deepseek(prompt: str) -> dict | None:
             timeout=600
         )
         resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"].strip()
+        msg = resp.json()["choices"][0]["message"]
+        content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
 
         # Strip thinking tags
         if "</think>" in content:
