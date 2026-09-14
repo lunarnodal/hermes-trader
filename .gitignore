@@ -52,3 +52,5 @@ pipeline/.venv/
 data/
 data/tickers.db
 /logs/
+pipeline/dashboard/app.py.bak*
+pipeline/**/*.bak*
