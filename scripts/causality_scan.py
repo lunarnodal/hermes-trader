@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPORTS_DIR = Path("/home/trading/trading-ai/reports/causality")
+REPORTS_DIR = Path("/mnt/qnap/timeseries/reports/causality")
 MANIFEST_PATH = REPORTS_DIR / "kanban_manifest.json"
 
 
