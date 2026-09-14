@@ -18,6 +18,9 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent.parent))
 from config import LESSONS_DB, PAPER_DB, RULES_DB
 
 sys.path.insert(0, str(Path(__file__).parent.parent))

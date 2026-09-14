@@ -3,6 +3,9 @@
 import requests, sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent.parent))
 from config import TICKERS_DB
 
 DB_PATH = TICKERS_DB
