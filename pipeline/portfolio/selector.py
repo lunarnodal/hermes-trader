@@ -382,22 +382,26 @@ def select_stocks_for_sector(sector: str,
                 })
         log.info(f"  → {len(recommendations)} individual stocks selected")
     else:
-        # ETF fallback
-        etf    = SECTOR_ETFS.get(sector, "SPY")
-        price  = fetch_current_price(etf)
-        if price:
-            recommendations.append({
-                "ticker":        etf,
-                "type":          "etf",
-                "sector":        sector,
-                "score":         prediction_confidence,
-                "signal_count":  len([s for s in signals
-                                     if sector in s.get("sectors", [])]),
-                "avg_conf":      prediction_confidence,
-                "current_price": price,
-                "rationale":     f"ETF fallback — no individual stocks met threshold"
-            })
-        log.info(f"  → ETF fallback: {etf}")
+        # ETF fallback — only for equity-eligible confidence (>= 0.70)
+        # Below 0.70 goes to theta-gang path, not equity ETF
+        if prediction_confidence >= 0.70:
+            etf    = SECTOR_ETFS.get(sector, "SPY")
+            price  = fetch_current_price(etf)
+            if price:
+                recommendations.append({
+                    "ticker":        etf,
+                    "type":          "etf",
+                    "sector":        sector,
+                    "score":         prediction_confidence,
+                    "signal_count":  len([s for s in signals
+                                         if sector in s.get("sectors", [])]),
+                    "avg_conf":      prediction_confidence,
+                    "current_price": price,
+                    "rationale":     f"ETF fallback — no individual stocks met threshold"
+                })
+            log.info(f"  → ETF fallback: {etf}")
+        else:
+            log.info(f"  → ETF fallback skipped: conf={prediction_confidence:.0%} < 70% — theta path only")
 
     return recommendations
 
