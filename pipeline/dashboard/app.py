@@ -15,7 +15,7 @@ from flask import Flask, jsonify, render_template_string, request, session
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from paper_trading.db import init_db, get_performance_summary
-from portfolio.db import (init_db as init_portfolio_db, get_open_positions,
+from portfolio.db import (init_db as init_portfolio_db, get_open_positions, get_positions_value,
                           get_cash_balance, get_portfolio_value, CONFIG as PORT_CONFIG)
 from qdrant_client import QdrantClient
 
@@ -1097,11 +1097,12 @@ def api_data():
             ORDER BY exit_date DESC LIMIT 10
         """).fetchall()
 
+        pos_value = round(get_positions_value(port_conn), 2)
         port_conn.close()
 
         data['portfolio'] = {
             'cash':          round(cash, 2),
-            'positions_value': round(get_positions_value(port_conn), 2),
+            'positions_value': pos_value,
             'total_value':   round(port_value, 2),
             'starting':      starting,
             'return_pct':    round(ret_pct, 2),
@@ -1156,6 +1157,8 @@ def api_data():
         ]
 
     except Exception as e:
+        import traceback
+        app.logger.error(f"Portfolio data error: {e}\n{traceback.format_exc()}")
         data['portfolio'] = {}
         data['positions'] = []
         data['recommendations'] = []
