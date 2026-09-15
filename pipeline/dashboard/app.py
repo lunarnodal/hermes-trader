@@ -1101,7 +1101,7 @@ def api_data():
 
         data['portfolio'] = {
             'cash':          round(cash, 2),
-            'positions_value': round(port_value - cash, 2),
+            'positions_value': round(get_positions_value(port_conn), 2),
             'total_value':   round(port_value, 2),
             'starting':      starting,
             'return_pct':    round(ret_pct, 2),
@@ -1254,10 +1254,9 @@ def api_data():
     try:
         from alpaca_feed.trading import get_theta_positions
         theta_raw = get_theta_positions()
-        # Separate organic vs hackathon accounts by ticker conventions
-        organic_tickers = {'AAPL','MSFT','NVDA','GOOGL','AMZN','META','TSLA','AMD','INTC','QCOM'}
-        organic_pos = [p for p in theta_raw if p["ticker"] in organic_tickers]
-        hackathon_pos = [p for p in theta_raw if p["ticker"] not in organic_tickers]
+        # All theta positions come from organic account (CSPs/CCs)
+        organic_pos = theta_raw
+        hackathon_pos = []
         total_premium = sum(p["premium"] for p in theta_raw)
         assignment_risk_count = sum(1 for p in theta_raw if p["assignment_risk"])
         data["theta"] = {
