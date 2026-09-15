@@ -141,11 +141,10 @@ def _daily_pnl_pct(conn: "sqlite3.Connection") -> float:
 
         # Realized P&L from today's closed trades
         realized_row = cur.execute(
-            """SELECT COALESCE(SUM(pnl), 0.0)
-               FROM positions
-               WHERE closed_at IS NOT NULL
-                 AND date(closed_at) = date(?)
-
+            """SELECT COALESCE(SUM(value * -1), 0.0)
+               FROM transactions
+               WHERE action = 'SELL'
+                 AND date(timestamp) = date(?)
             """,
             (today_start,),
         ).fetchone()
@@ -165,7 +164,7 @@ def _open_position_value(conn: "sqlite3.Connection", ticker: str) -> float:
     with conn:
         row = conn.execute(
             "SELECT current_price, shares FROM positions "
-            "WHERE ticker = ? AND closed_at IS NULL",
+            "WHERE ticker = ? AND status = 'open'",
             (ticker,),
         ).fetchone()
     if row and row[0] and row[1]:
@@ -183,7 +182,7 @@ def _current_portfolio_value(conn: "sqlite3.Connection") -> float:
 
         pos_val = 0.0
         rows = conn.execute(
-            "SELECT current_price, shares FROM positions WHERE closed_at IS NULL",
+            "SELECT current_price, shares FROM positions WHERE status = 'open'",
         ).fetchall()
         for cp, sh in rows:
             if cp and sh:
@@ -302,7 +301,7 @@ def check_duplicate_order(
     with conn:
         row = conn.execute(
             "SELECT id, shares FROM positions "
-            "WHERE ticker = ? AND closed_at IS NULL",
+            "WHERE ticker = ? AND status = 'open'",
             (ticker,),
         ).fetchone()
     if row:
