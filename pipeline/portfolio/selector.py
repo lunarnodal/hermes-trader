@@ -58,24 +58,12 @@ EXCLUDED_TICKERS = {
     'DOW', 'SP', 'ETF', 'IPO', 'AI', 'EV',
 }
 
-# Sector → ETF fallback mapping
-SECTOR_ETFS = {
-    "energy":          "XLE",
-    "oil_gas":         "XOP",
-    "technology":      "XLK",
-    "ai_infrastructure": "AIQ",
-    "semiconductors":  "SOXX",
-    "financials":      "XLF",
-    "healthcare":      "XLV",
-    "defense":         "ITA",
-    "utilities":       "XLU",
-    "real_estate":     "VNQ",
-    "consumer":        "XLP",
-    "consumer_staples": "XLP",
-    "materials":       "XLB",
-    "industrials":     "XLI",
-    "macro":           "SPY",
-}
+# Shared sector→ETF module — replaces local SECTOR_ETFS dict.
+# Note: selector.py uses SECTOR_ETFS[sector] as an ETF fallback in
+# select_stocks_for_sector().  The shared module's SECTOR_ETFS dict
+# contains all the same sector→ETF keys plus new ones, so the
+# call-site semantics are preserved.
+from sector_etf import SECTOR_ETFS
 
 # Minimum signals required to buy individual stock vs ETF
 MIN_SIGNALS_FOR_STOCK = 2

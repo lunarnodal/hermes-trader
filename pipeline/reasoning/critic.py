@@ -28,43 +28,12 @@ PAPER_DB   = PAPER_DB
 LESSONS_DB = LESSONS_DB
 RULES_DB   = RULES_DB
 
-# Organic sector → ETF mapping for momentum gate
-# Covers both canonical sectors and organic tags discovered in signal corpus
-SECTOR_ETF_MAP = {
-    # Canonical sectors
-    "technology":       "XLK",
-    "energy":           "XLE",
-    "healthcare":       "XLV",
-    "financials":       "XLF",
-    "industrials":      "XLI",
-    "consumer":         "XLY",
-    "materials":        "XLB",
-    "macro":            "SPY",
-    "defense":          "XAR",
-    # Organic sub-sector tags → parent ETF
-    "ai_infrastructure":"XLK",
-    "semiconductors":   "SOXX",
-    "biotech":          "XLV",
-    "banking":          "XLF",
-    "real_estate":      "XLRE",
-    "utilities":        "XLU",
-    "consumer_staples": "XLP",
-    "commodities":      "XLB",
-    "aerospace":        "XAR",
-    "space":            "XAR",
-    "cybersecurity":    "XLK",
-    "software":         "XLK",
-    "data_center":      "XLK",
-    "emerging_markets": "EEM",
-    "india":            "INDA",
-    "automotive":       "XLY",
-    "entertainment":    "XLY",
-    "chemicals":        "XLB",
-    "agriculture":      "MOO",
-    "construction":     "XLI",
-    "aviation":         "XAR",
-    "commercial_real_estate": "XLRE",
-}
+# Shared sector→ETF module — replaces local SECTOR_ETF_MAP dict.
+# Note: critic.py uses SECTOR_ETF_MAP[sector] in get_sector_momentum()
+# and critique_prediction() for the momentum gate.  The shared module's
+# SECTOR_ETFS dict contains all the same sector→ETF keys plus reconciled
+# values (defense→ITA, automotive→CARZ, data_center→AIQ per authoritative table).
+from sector_etf import SECTOR_ETFS as SECTOR_ETF_MAP
 
 # Cache momentum data per session (30 min TTL)
 _momentum_cache: dict[str, tuple[float, float]] = {}  # etf → (timestamp, pct_change)

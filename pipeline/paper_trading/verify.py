@@ -42,46 +42,8 @@ TIMEFRAME_HOURS = {
     "1w":  168
 }
 
-# Sector → representative ETF mapping for verification
-SECTOR_ETFS = {
-    "energy":          "XLE",
-    "oil_gas":         "XOP",
-    "technology":      "XLK",
-    "ai_infrastructure": "AIQ",
-    "semiconductors":  "SOXX",
-    "financials":      "XLF",
-    "healthcare":      "XLV",
-    "defense":         "ITA",
-    "utilities":       "XLU",
-    "real_estate":     "VNQ",
-    "consumer_staples": "XLP",
-    "manufacturing":   "XLI",
-    "agriculture":     "MOO",
-    "commodities":     "DJP",
-}
-
-# Query keywords → sector ETF mapping
-QUERY_SECTOR_MAP = {
-    "energy":        "XLE",
-    "oil":           "XLE",
-    "semiconductor": "SOXX",
-    "ai":            "AIQ",
-    "tech":          "XLK",
-    "financial":     "XLF",
-    "healthcare":    "XLV",
-    "defense":       "ITA",
-    "utility":       "XLU",
-    "agriculture":   "MOO",
-}
-
-
-def get_sector_etf(query: str) -> str:
-    """Determine best ETF to use for verification based on query"""
-    query_lower = query.lower()
-    for keyword, etf in QUERY_SECTOR_MAP.items():
-        if keyword in query_lower:
-            return etf
-    return "SPY"  # Default to S&P 500
+# Shared sector→ETF module — replaces local QUERY_SECTOR_MAP + get_sector_etf
+from sector_etf import get_sector_etf
 
 
 def fetch_price_change(ticker: str, hours_back: int) -> dict | None:
