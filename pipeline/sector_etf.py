@@ -36,8 +36,8 @@ SECTOR_ETFS: dict[str, str] = {
     "oil_gas":              "XOP",
     "oil_services":         "XOP",
     "technology":           "XLK",
-    "ai_infrastructure":    "AIQ",
-    "ai_infra":             "AIQ",
+    "ai_infrastructure":    "SOXX",
+    "ai_infra":             "SOXX",
     "semiconductors":       "SOXX",
     "semis":                "SOXX",
     "financials":           "XLF",
@@ -67,11 +67,11 @@ SECTOR_ETFS: dict[str, str] = {
     "biotech":              "XLV",
     "cybersecurity":        "XLK",
     "software":             "XLK",
-    "data_center":          "AIQ",
+    "data_center":          "SOXX",
     "aerospace":            "ITA",
     "automotive":           "CARZ",
     "aviation":             "ITA",
-    "space":                "XAR",
+    "space":                "ITA",
     "entertainment":        "XLY",
     "chemicals":            "XLB",
     "construction":         "XLI",
@@ -103,13 +103,13 @@ KEYWORDS: list[tuple[str, str]] = [
     ("chip",           "semiconductors"),
     ("chips",          "semiconductors"),
 
-    # Consumer staples (XLP) — before discretionary
+    # Consumer discretionary (XLY) — before staples
+    ("discretionary",  "consumer_discretionary"),
+
+    # Consumer staples (XLP)
     ("staples",        "consumer_staples"),
     ("retail",         "consumer_staples"),
-    ("consumer",       "consumer_staples"),
-
-    # Consumer discretionary (XLY)
-    ("discretionary",  "consumer_discretionary"),
+    ("consumer",       "consumer_discretionary"),
 
     # Industrials (XLI) — before defense/aerospace
     ("industrials",    "industrials"),
