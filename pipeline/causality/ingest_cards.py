@@ -283,9 +283,11 @@ def create_kanban_card(card: dict, report_file: str) -> dict | None:
     # idempotency_key prevents duplicates if this script reruns
     idempotency_key = f"causality-ingest-{card_id}"
 
+    # NOTE: `hermes kanban create` takes the title as a POSITIONAL arg,
+    # not a --title flag (verified against the live CLI 2026-09-18).
     cmd = [
         "hermes", "kanban", "create",
-        "--title", title,
+        title,
         "--body", body,
         "--assignee", "orchestrator",
         "--idempotency-key", idempotency_key,
