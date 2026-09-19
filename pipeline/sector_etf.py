@@ -89,6 +89,14 @@ SECTOR_ETFS: dict[str, str] = {
 # AFTER the specific ones they could otherwise shadow.
 
 KEYWORDS: list[tuple[str, str]] = [
+    # Market (SPY) — macro keywords, highest priority
+    ("market",         "macro"),
+    ("s&p",            "macro"),
+    ("sp500",          "macro"),
+    ("s&p 500",        "macro"),
+    ("stock market",   "macro"),
+    ("equities",       "macro"),
+
     # Healthcare (XLV) — before tech to prevent "tech" in "biotech"
     ("biotech",        "healthcare"),
     ("pharma",         "healthcare"),
@@ -102,6 +110,7 @@ KEYWORDS: list[tuple[str, str]] = [
     ("semiconductor",  "semiconductors"),
     ("chip",           "semiconductors"),
     ("chips",          "semiconductors"),
+    ("semis",          "semiconductors"),
 
     # Consumer discretionary (XLY) — before staples
     ("discretionary",  "consumer_discretionary"),
@@ -126,6 +135,17 @@ KEYWORDS: list[tuple[str, str]] = [
     ("shipping",       "shipping"),
     ("logistics",      "shipping"),
     ("container",      "shipping"),
+
+    # Financials (XLF)
+    ("banks",          "financials"),
+    ("bank",           "financials"),
+    ("lending",        "financials"),
+    ("financial",      "financials"),
+    ("rates",          "financials"),
+    ("fed",            "financials"),
+    ("fomc",           "financials"),
+    ("treasury",       "financials"),
+    ("yields",         "financials"),
 
     # Real estate (VNQ)
     ("reits",          "real_estate"),
@@ -154,17 +174,6 @@ KEYWORDS: list[tuple[str, str]] = [
 
     # Insurance (KIE)
     ("insurance",      "insurance"),
-
-    # Financials (XLF)
-    ("banks",          "financials"),
-    ("bank",           "financials"),
-    ("lending",        "financials"),
-    ("financial",      "financials"),
-    ("rates",          "financials"),
-    ("fed",            "financials"),
-    ("fomc",           "financials"),
-    ("treasury",       "financials"),
-    ("yields",         "financials"),
 
     # Energy (XLE) — before oil/gas
     ("crude",          "energy"),
