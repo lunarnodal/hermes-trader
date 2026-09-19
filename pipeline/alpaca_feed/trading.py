@@ -142,15 +142,15 @@ def get_theta_positions() -> list[dict]:
             symbol = pos.get("ticker", "")
             if len(symbol) < 14 or not any(c.isdigit() for c in symbol[3:8]):
                 continue
-            if symbol[8] not in ("C", "P"):
+            if symbol[9] not in ("C", "P"):
                 continue
             if pos.get("qty", 0) >= 0:
                 continue
             try:
                 underlying = symbol[:3].strip()
                 date_str = symbol[3:8]
-                cp = symbol[8]
-                strike = float(symbol[9:]) / 1000.0
+                cp = symbol[9]
+                strike = float(symbol[10:]) / 1000.0
                 year = 2000 + int(date_str[:2])
                 month = int(date_str[2:4])
                 day = int(date_str[4:6])

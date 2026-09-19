@@ -516,18 +516,24 @@ def generate_recommendations(predictions: list[dict],
             )
             continue
 
-        # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
-        # Hermes analysis (2026-08-31): challenge verdict reduces confidence but doesn't
-        # block execution. This gate prevents the critic's "weak sector" warnings from
-        # being overridden by marginal confidence scores.
+        # ── Gate thresholds ──────────────────────────────────────────────
+        # Tightened after causality analysis (2026-09-15 Finding 5).
+        # Bullish needs higher confidence when sector win rate is weak;
+        # mixed directions are blocked unless confidence is solid.
+        HARD_BLOCK_WIN_RATE      = 0.35   # sector win-rate floor for bullish
+        HARD_BLOCK_BULLISH_CONF  = 0.70   # bullish confidence floor under weak sector
+        HARD_BLOCK_MIXED_CONF    = 0.55   # mixed-direction confidence floor
+        RECENT_WINDOW_SIZE       = 15     # predictions in recent-window lookback
+        RECENT_WINDOW_MIN        = 5      # min samples before recent window overrides
+
         # Dynamic win rates from prediction outcomes (last 90 days)
-        # Falls back to hardcoded defaults if insufficient data
+        # Falls back to hardcoded defaults if insufficient data.
         _hardcoded_win_rates = {
             "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38,
             "healthcare": 0.35, "consumer": 0.30, "industrials": 0.14,
             "macro": 0.28, "materials": 0.27, "financials": 0.21, "defense": 0.50,
         }
-        sector_win_rate = _hardcoded_win_rates.get(sector, 0.40)
+        smoothed_wr = _hardcoded_win_rates.get(sector, 0.40)
         if conn:
             # Try semantic win rate first — uses embedding proximity to find
             # similar past predictions regardless of sector tag taxonomy
@@ -541,8 +547,8 @@ def generate_recommendations(predictions: list[dict],
                         min_samples=10
                     )
                     if _semantic_wr is not None:
-                        sector_win_rate = _semantic_wr
-                        log.debug(f"[WIN_RATE] {sector}: {sector_win_rate:.1%} (semantic)")
+                        smoothed_wr = _semantic_wr
+                        log.debug(f"[WIN_RATE] {sector}: {smoothed_wr:.1%} (semantic)")
                 except Exception as _swe:
                     log.debug(f"[WIN_RATE] Semantic lookup failed for {sector}: {_swe}")
 
@@ -558,22 +564,77 @@ def generate_recommendations(predictions: list[dict],
                           AND (query LIKE ? OR query LIKE ?)
                     """, (f'%{sector}%', f'%{sector.replace("_", " ")}%')).fetchone()
                     if _row and _row[0] >= 20:
-                        sector_win_rate = round(_row[1] / _row[0], 3)
-                        log.debug(f"[WIN_RATE] {sector}: {_row[1]}/{_row[0]} = {sector_win_rate:.1%} (text-match)")
+                        smoothed_wr = round(_row[1] / _row[0], 3)
+                        log.debug(f"[WIN_RATE] {sector}: {_row[1]}/{_row[0]} = {smoothed_wr:.1%} (text-match)")
                 except Exception:
                     pass  # fall back to hardcoded
 
-        # Hard-block: sector win rate < 35% AND bullish AND confidence < 0.65
-        if sector_win_rate < 0.35 and direction == "bullish" and confidence < 0.65:
+            # Recent-window win rate: last N verified predictions per sector.
+            # Use min(recent_wr, smoothed_wr) as effective win rate so a short
+            # losing streak downgrades an otherwise healthy smoothed score.
+            # Guard: need >= RECENT_WINDOW_MIN samples or fall back to smoothed.
+            try:
+                _rrow = conn.execute("""
+                    SELECT COUNT(*) as total,
+                           SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
+                    FROM signal_ledger
+                    WHERE was_correct IS NOT NULL
+                      AND sector = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (sector, RECENT_WINDOW_SIZE)).fetchone()
+                if _rrow and _rrow[0] >= RECENT_WINDOW_MIN:
+                    recent_wr = round(_rrow[1] / _rrow[0], 3)
+                    sector_win_rate = min(recent_wr, smoothed_wr)
+                    log.debug(
+                        f"[WIN_RATE] {sector}: recent={recent_wr:.1%} "
+                        f"smoothed={smoothed_wr:.1%} -> effective={sector_win_rate:.1%}"
+                    )
+                else:
+                    sector_win_rate = smoothed_wr
+                    log.debug(
+                        f"[WIN_RATE] {sector}: insufficient recent samples "
+                        f"({_rrow[0] if _rrow else 0} < {RECENT_WINDOW_MIN}), "
+                        f"using smoothed={smoothed_wr:.1%}"
+                    )
+            except Exception:
+                sector_win_rate = smoothed_wr
+        else:
+            sector_win_rate = smoothed_wr
+
+        # Hard-block: bullish with weak sector + low confidence
+        if sector_win_rate < HARD_BLOCK_WIN_RATE                 and direction == "bullish"                 and confidence < HARD_BLOCK_BULLISH_CONF:
             log.info(
-                f"HARD BLOCK {sector}: win_rate={sector_win_rate:.0%} < 35%, "
-                f"bullish, conf={confidence:.0%} < 65% — auto-reject"
+                f"HARD BLOCK {sector}: effective_wr={sector_win_rate:.0%} "
+                f"< {HARD_BLOCK_WIN_RATE:.0%}, bullish, "
+                f"conf={confidence:.0%} < {HARD_BLOCK_BULLISH_CONF:.0%} — auto-reject"
             )
             _log_rejected_signal(
                 sector=sector, query=query, direction=direction,
                 raw_conf=confidence, adj_conf=confidence,
-                gate="hard_block",
-                reason=f"win_rate={sector_win_rate:.0%} < 35%, conf={confidence:.0%} < 65%",
+                gate="hard_block_bullish",
+                reason=(
+                    f"effective_wr={sector_win_rate:.0%} < {HARD_BLOCK_WIN_RATE:.0%}, "
+                    f"conf={confidence:.0%} < {HARD_BLOCK_BULLISH_CONF:.0%}"
+                ),
+                sector_win_rate=sector_win_rate
+            )
+            continue
+
+        # Hard-block: mixed direction with low confidence
+        if direction == "mixed" and confidence < HARD_BLOCK_MIXED_CONF:
+            log.info(
+                f"HARD BLOCK {sector}: direction=mixed, "
+                f"conf={confidence:.0%} < {HARD_BLOCK_MIXED_CONF:.0%} — auto-reject"
+            )
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="hard_block_mixed",
+                reason=(
+                    f"direction=mixed, conf={confidence:.0%} "
+                    f"< {HARD_BLOCK_MIXED_CONF:.0%}"
+                ),
                 sector_win_rate=sector_win_rate
             )
             continue
