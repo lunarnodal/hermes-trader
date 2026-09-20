@@ -136,16 +136,18 @@ def verify_prediction(conn: sqlite3.Connection,
     """Mark a prediction as verified with actual outcome"""
     now = datetime.now(timezone.utc).isoformat()
 
-    predicted = conn.execute(
-        "SELECT direction FROM predictions WHERE id = ?",
+    row = conn.execute(
+        "SELECT direction, confidence, reasoning_summary, critic_verdict "
+        "FROM predictions WHERE id = ?",
         (prediction_id,)
     ).fetchone()
 
-    if not predicted:
+    if not row:
         log.error(f"Prediction #{prediction_id} not found")
         return
 
-    was_correct = 1 if predicted[0] == actual_direction else 0
+    direction, confidence, reasoning_summary, critic_verdict = row
+    was_correct = 1 if direction == actual_direction else 0
 
     conn.execute("""
         UPDATE predictions
@@ -153,11 +155,114 @@ def verify_prediction(conn: sqlite3.Connection,
             was_correct = ?, actual_notes = ?
         WHERE id = ?
     """, (now, actual_direction, was_correct, notes, prediction_id))
+
+    # Write rule_performance rows for contributing rules
+    try:
+        write_rule_performance(conn, prediction_id, was_correct,
+                               direction, confidence, reasoning_summary,
+                               critic_verdict, now)
+    except Exception:
+        log.exception(f"write_rule_performance failed for prediction #{prediction_id}")
+
     conn.commit()
 
     result = "✓ CORRECT" if was_correct else "✗ WRONG"
     log.info(f"Prediction #{prediction_id} verified: {result} "
-             f"(predicted={predicted[0]}, actual={actual_direction})")
+             f"(predicted={direction}, actual={actual_direction})")
+
+
+def write_rule_performance(conn: sqlite3.Connection,
+                           prediction_id: int,
+                           was_correct: int,
+                           direction: str,
+                           confidence: float,
+                           reasoning_summary: str,
+                           critic_verdict: str,
+                           evaluated_at: str) -> None:
+    """Write one rule_performance row per contributing inference rule.
+
+    Schema (rule_performance):
+        id, rule_trigger TEXT NOT NULL, evaluated_at TEXT,
+        prediction_id INTEGER REFERENCES predictions(id),
+        was_correct INTEGER, signal_confidence REAL, notes TEXT
+
+    Extracts rule references from the reasoning_summary and critic_verdict
+    text. Idempotent: skips if a (prediction_id, rule_trigger) row exists.
+    """
+    import re
+
+    text_parts = []
+    if reasoning_summary:
+        text_parts.append(reasoning_summary)
+    if critic_verdict:
+        text_parts.append(critic_verdict)
+    full_text = " ".join(text_parts)
+
+    if not full_text.strip():
+        log.debug(f"No reasoning text for prediction #{prediction_id} — skipping rule perf")
+        return
+
+    triggers = set()
+
+    # Pattern 1: inference_rule:<id> (e.g. "inference_rule:42")
+    for m in re.finditer(r"inference_rule[:\s]*(\d+)", full_text):
+        triggers.add(f"inference_rule:{m.group(1)}")
+
+    # Pattern 2: [Rule <id>] or Rule <id> (bracketed or bare)
+    for m in re.finditer(r"\[?\s*Rule\s+(\d+)\s*\]?", full_text):
+        triggers.add(f"rule:{m.group(1)}")
+
+    # Pattern 3: inference rule <id> (natural language)
+    for m in re.finditer(r"inference\s+rule\s+(\d+)", full_text, re.IGNORECASE):
+        triggers.add(f"inference_rule:{m.group(1)}")
+
+    # Pattern 4: Gate identifiers mentioned by name
+    gate_keywords = [
+        "hard_block_bullish",
+        "hard_block_bearish",
+        "sector_fuel_trim",
+        "ltft",
+        "stft",
+        "calibration_gate",
+        "confidence_gate",
+        "win_rate_gate",
+    ]
+    text_lower = full_text.lower()
+    for kw in gate_keywords:
+        if kw.replace("_", " ") in text_lower or kw in text_lower:
+            triggers.add(kw)
+
+    if not triggers:
+        log.debug(f"No contributing rules found for prediction #{prediction_id}")
+        return
+
+    inserted = 0
+    for trigger in sorted(triggers):
+        # Idempotency check: skip if already recorded
+        existing = conn.execute(
+            "SELECT id FROM rule_performance "
+            "WHERE prediction_id = ? AND rule_trigger = ?",
+            (prediction_id, trigger)
+        ).fetchone()
+        if existing:
+            log.debug(f"Skipping duplicate: prediction #{prediction_id} rule {trigger}")
+            continue
+
+        # Put context into notes as compact key=value string
+        notes_str = f"sector=prediction;event_type=verification;direction={direction}"
+
+        conn.execute(
+            "INSERT INTO rule_performance "
+            "(rule_trigger, evaluated_at, prediction_id, was_correct, "
+            "signal_confidence, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (trigger, evaluated_at, prediction_id, was_correct,
+             confidence, notes_str)
+        )
+        inserted += 1
+
+    if inserted > 0:
+        log.info(f"Recorded {inserted} rule performance row(s) for prediction #{prediction_id}")
 
 
 # ─── Paper Trades ─────────────────────────────────────────────────────────────
