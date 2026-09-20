@@ -397,7 +397,8 @@ def select_stocks_for_sector(sector: str,
 def _log_rejected_signal(sector: str, query: str, direction: str,
                           raw_conf: float, adj_conf: float,
                           gate: str, reason: str,
-                          sector_win_rate: float = None, vix: float = None) -> None:
+                          sector_win_rate: float = None, vix: float = None,
+                          event_type: str = "other") -> None:
     """Write rejected signal to ledger for future outcome tracking."""
     try:
         import sqlite3
@@ -410,13 +411,14 @@ def _log_rejected_signal(sector: str, query: str, direction: str,
         conn.execute("""
             INSERT INTO signal_ledger
               (created_at, query, sector, direction, raw_confidence,
-               adj_confidence, gate_failed, gate_reason, sector_win_rate, vix_at_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               adj_confidence, gate_failed, gate_reason, sector_win_rate,
+               vix_at_time, event_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             datetime.now(timezone.utc).isoformat(),
             query, sector, direction,
             raw_conf, adj_conf, gate, reason,
-            sector_win_rate, vix
+            sector_win_rate, vix, event_type
         ))
         conn.commit()
         conn.close()
@@ -444,41 +446,7 @@ def generate_recommendations(predictions: list[dict],
         confidence = p.get("confidence", 0)
         query     = pred.get("query", "")
 
-        # Only act on bullish predictions with sufficient confidence
-        # Exception: bullish 50-70% conf can still trigger theta-gang (CSP)
-        if direction != "bullish":
-            log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
-            _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
-                raw_conf=confidence, adj_conf=confidence,
-                gate="direction_confidence",
-                reason=f"direction={direction} conf={confidence:.2f} < 0.70"
-            )
-            continue
-        theta_only = confidence < 0.70  # below equity threshold — theta path only
-        if confidence < 0.50:
-            log.info(f"Skipping bullish prediction (conf={confidence:.2f}) — below theta floor")
-            _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
-                raw_conf=confidence, adj_conf=confidence,
-                gate="direction_confidence",
-                reason=f"conf={confidence:.2f} < 0.50 (theta floor)"
-            )
-            continue
-
-        # Critic verdict gate — reject verdicts block recommendations
-        verdict = p.get("critic_verdict", "approve")
-        if verdict == "reject":
-            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
-            _log_rejected_signal(
-                sector="unknown", query=query, direction=direction,
-                raw_conf=confidence, adj_conf=confidence,
-                gate="critic_verdict_reject",
-                reason="critic verdict=reject"
-            )
-            continue
-
-        # Extract sector from query
+        # Extract sector and event_type early — needed for all rejection gates
         query_lower = query.lower()
         sector = "macro"
         sector_keywords = {
@@ -497,6 +465,44 @@ def generate_recommendations(predictions: list[dict],
             if any(kw in query_lower for kw in keywords):
                 sector = s
                 break
+        event_type = p.get("event_type", "other") or "other"
+
+        # Only act on bullish predictions with sufficient confidence
+        # Exception: bullish 50-70% conf can still trigger theta-gang (CSP)
+        if direction != "bullish":
+            log.info(f"Skipping {direction} prediction (conf={confidence:.2f})")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="direction_confidence",
+                reason=f"direction={direction} conf={confidence:.2f} < 0.70",
+                event_type=event_type
+            )
+            continue
+        theta_only = confidence < 0.70  # below equity threshold — theta path only
+        if confidence < 0.50:
+            log.info(f"Skipping bullish prediction (conf={confidence:.2f}) — below theta floor")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="direction_confidence",
+                reason=f"conf={confidence:.2f} < 0.50 (theta floor)",
+                event_type=event_type
+            )
+            continue
+
+        # Critic verdict gate — reject verdicts block recommendations
+        verdict = p.get("critic_verdict", "approve")
+        if verdict == "reject":
+            log.info(f"REJECT verdict for {query} -- blocking from recommendations")
+            _log_rejected_signal(
+                sector=sector, query=query, direction=direction,
+                raw_conf=confidence, adj_conf=confidence,
+                gate="critic_verdict_reject",
+                reason="critic verdict=reject",
+                event_type=event_type
+            )
+            continue
 
 
         # Hard-block: macro/S&P predictions - 0% win rate (0/6) on bearish,
@@ -512,7 +518,8 @@ def generate_recommendations(predictions: list[dict],
                 raw_conf=confidence, adj_conf=confidence,
                 gate="macro_hard_block",
                 reason="macro sector excluded: 0% win rate bearish, 27% bullish all-time",
-                sector_win_rate=0.28
+                sector_win_rate=0.28,
+                event_type=event_type
             )
             continue
 
@@ -617,7 +624,8 @@ def generate_recommendations(predictions: list[dict],
                     f"effective_wr={sector_win_rate:.0%} < {HARD_BLOCK_WIN_RATE:.0%}, "
                     f"conf={confidence:.0%} < {HARD_BLOCK_BULLISH_CONF:.0%}"
                 ),
-                sector_win_rate=sector_win_rate
+                sector_win_rate=sector_win_rate,
+                event_type=event_type
             )
             continue
 
@@ -635,7 +643,8 @@ def generate_recommendations(predictions: list[dict],
                     f"direction=mixed, conf={confidence:.0%} "
                     f"< {HARD_BLOCK_MIXED_CONF:.0%}"
                 ),
-                sector_win_rate=sector_win_rate
+                sector_win_rate=sector_win_rate,
+                event_type=event_type
             )
             continue
 
@@ -675,7 +684,8 @@ def generate_recommendations(predictions: list[dict],
                     raw_conf=confidence, adj_conf=adjusted_confidence,
                     gate="meta_correction",
                     reason=f"raw={confidence:.0%} adj={adjusted_confidence:.0%} < 0.70 after sector penalty",
-                    sector_win_rate=sector_win_rate
+                    sector_win_rate=sector_win_rate,
+                    event_type=event_type
                 )
         confidence = adjusted_confidence
 
@@ -698,7 +708,8 @@ def generate_recommendations(predictions: list[dict],
                 raw_conf=confidence, adj_conf=0.0,
                 gate="direction_hard_block",
                 reason=f"direction={direction} has 0% historical win rate",
-                sector_win_rate=sector_win_rate
+                sector_win_rate=sector_win_rate,
+                event_type=event_type
             )
             continue
         dir_adjusted = confidence * (1 - dir_penalty)
@@ -776,6 +787,7 @@ def generate_recommendations(predictions: list[dict],
                     gate="theta_sector_block",
                     reason=f"sector win_rate={sector_win_rate:.0%} < {THETA_MIN_WIN_RATE:.0%} theta minimum",
                     sector_win_rate=sector_win_rate,
+                    event_type=event_type
                 )
                 continue
 
