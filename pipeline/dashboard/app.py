@@ -665,23 +665,38 @@ async function loadData() {
       </tr>`
     ).join('');
 
-  // Activity feed from closed positions
+  // Activity feed — equity trades + theta events merged
   const closed = data.closed_positions || [];
+  const thetaEvents = (data.theta_events || []).map(t => ({...t, _type: 'theta'}));
+  const allActivity = [...closed.map(c => ({...c, _type: 'equity'})), ...thetaEvents]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const actEl = document.getElementById('activityFeed');
-  if (!closed.length) {
+  if (!allActivity.length) {
     actEl.innerHTML = '<div class="gray" style="font-size:12px">No recent activity</div>';
   } else {
-    actEl.innerHTML = closed.slice(0,8).map(c => {
+    actEl.innerHTML = allActivity.slice(0,10).map(c => {
+      if (c._type === 'theta') {
+        const pnlCls2 = c.pnl > 0 ? 'green' : c.pnl < 0 ? 'red' : 'gray';
+        const icon = c.status === 'assigned' ? '⚡' : c.pnl > 0 ? '✓' : c.pnl < 0 ? '✗' : '◐';
+        const evtLabel = c.event === 'profit_close' ? 'Profit' : c.event === 'defensive_close' ? 'Defensive' : c.event === 'expired' ? 'Expired' : c.status === 'open' ? 'Open' : c.event || c.status;
+        const pnlStr = c.pnl != null ? (c.pnl >= 0 ? '+' : '') + fmt$(c.pnl) : '$' + fmt$(c.premium) + ' prem';
+        return '<div class="activity-item">'
+          + '<span style="color:#f59e0b;font-weight:600">' + icon + ' ' + c.ticker + ' ' + c.instrument + '</span>'
+          + ' <span class="gray">$' + c.strike + ' · ' + evtLabel + '</span>'
+          + ' <span class="' + pnlCls2 + '">' + pnlStr + '</span>'
+          + ' <span class="gray">' + c.date + '</span>'
+          + '</div>';
+      }
       const isWin = c.pnl > 0;
       const reasonShort = c.reason?.includes('profit') ? 'PROFIT'
                         : c.reason?.includes('stop')   ? 'STOP'
                         : c.reason?.includes('time')   ? 'TIME'
                         : 'EXIT';
-      return `<div class="activity-item">
-        <span class="${isWin?'green':'red'}" style="font-weight:600">${reasonShort} ${c.ticker}</span>
-        <span class="${isWin?'green':'red'}">${isWin?'+':''}${fmt$(c.pnl)} (${fmtPct(c.pnl_pct)})</span>
-        <span class="gray">${c.date}</span>
-      </div>`;
+      return '<div class="activity-item">'
+        + '<span class="' + (isWin?'green':'red') + '" style="font-weight:600">' + reasonShort + ' ' + c.ticker + '</span>'
+        + ' <span class="' + (isWin?'green':'red') + '">' + (isWin?'+':'') + fmt$(c.pnl) + ' (' + fmtPct(c.pnl_pct) + ')</span>'
+        + ' <span class="gray">' + c.date + '</span>'
+        + '</div>';
     }).join('');
   }
 
@@ -1105,7 +1120,6 @@ def api_data():
         """).fetchall()
 
         pos_value = round(get_positions_value(port_conn), 2)
-        port_conn.close()
 
         data['portfolio'] = {
             'cash':          round(cash, 2),
@@ -1163,6 +1177,34 @@ def api_data():
             for c in closed
         ]
 
+        # Theta events for activity feed
+        theta_rows = port_conn.execute("""
+            SELECT ticker, instrument_type, strike, premium_collected,
+                   status, assignment_event, entry_date, exit_date, pnl, pnl_pct
+            FROM theta_positions
+            WHERE status != 'cancelled'
+            ORDER BY COALESCE(exit_date, entry_date) DESC
+            LIMIT 20
+        """).fetchall()
+        data['theta_events'] = [
+            {
+                'ticker':     t[0],
+                'instrument': 'CSP' if t[1] == 'cash_secured_put' else 'CC',
+                'strike':     t[2],
+                'premium':    round(t[3], 2) if t[3] else 0,
+                'status':     t[4],
+                'event':      t[5] or '',
+                'entry_date': t[6][:10] if t[6] else '',
+                'exit_date':  t[7][:10] if t[7] else '',
+                'pnl':        round(t[8], 2) if t[8] else None,
+                'pnl_pct':   round(t[9], 2) if t[9] else None,
+                'date':       (t[7] or t[6] or '')[:10],
+                'type':       'theta',
+            }
+            for t in theta_rows
+        ]
+        port_conn.close()
+
     except Exception as e:
         import traceback
         app.logger.error(f"Portfolio data error: {e}\n{traceback.format_exc()}")
@@ -1170,6 +1212,7 @@ def api_data():
         data['positions'] = []
         data['recommendations'] = []
         data['closed_positions'] = []
+        data['theta_events'] = []
 
     # Enrich open positions with live/extended Alpaca prices
     try:
