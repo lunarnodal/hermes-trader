@@ -27,6 +27,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from config_reader import get_config
+
 import sys
 from config import TICKERS_DB
 
@@ -150,12 +152,12 @@ def _validate_signal_ledger(db_path: str) -> bool:
         )
         return False
 
-# Per event_type threshold overrides
-# When an event_type has an entry here, its specific thresholds and
+# Per event_type threshold overrides (DB > default dict).
+# When an event_type has an entry, its specific thresholds and
 # weight_multiplier replace the global defaults for scoring/filtering.
 # This allows niche but high-conviction event types (e.g. ai_infrastructure)
 # to flow through with relaxed thresholds.
-EVENT_TYPE_CONFIG = {
+_DEFAULT_EVENT_TYPE_CONFIG = {
     "ai_infrastructure": {
         "min_signals": 1,
         "min_confidence": 0.65,
@@ -172,6 +174,11 @@ EVENT_TYPE_CONFIG = {
         "weight_multiplier": 1.20,
     },
 }
+
+
+def _get_event_type_config(conn=None):
+    """Resolve event_type config. Precedence: DB > default dict."""
+    return get_config(conn, 'event_type_config', _DEFAULT_EVENT_TYPE_CONFIG, dict)
 
 
 def get_recent_signals(hours_back: int = 48) -> list[dict]:
@@ -247,14 +254,15 @@ def score_ticker(ticker: str, signals: list[dict]) -> dict:
     composite = signal_composite * 0.7 + enrichment_boost
 
     # Apply per-event_type weight_multiplier if any signal matches a config entry
-    if EVENT_TYPE_CONFIG:
+    _et_config = _get_event_type_config()
+    if _et_config:
         event_types_in_signals = set()
         for s in ticker_signals:
             et = s.get("event_type")
             if et:
                 event_types_in_signals.add(et)
         for et in event_types_in_signals:
-            cfg = EVENT_TYPE_CONFIG.get(et)
+            cfg = _et_config.get(et)
             if cfg:
                 composite *= cfg["weight_multiplier"]
                 break  # apply highest-priority match (first match)
@@ -400,7 +408,8 @@ def select_stocks_for_sector(sector: str,
         # Determine per-event_type thresholds (override globals if configured)
         _min_signals = MIN_SIGNALS_FOR_STOCK
         _min_conf = 0.75
-        if EVENT_TYPE_CONFIG:
+        _et_config = _get_event_type_config()
+        if _et_config:
             _event_types = set()
             for s in signals:
                 if ticker in s.get("tickers", []):
@@ -408,7 +417,7 @@ def select_stocks_for_sector(sector: str,
                     if et:
                         _event_types.add(et)
             for et in _event_types:
-                cfg = EVENT_TYPE_CONFIG.get(et)
+                cfg = _et_config.get(et)
                 if cfg:
                     _min_signals = cfg["min_signals"]
                     _min_conf = cfg["min_confidence"]
@@ -534,6 +543,22 @@ def generate_recommendations(predictions: list[dict],
     recommendations = []
     open_tickers    = {p["ticker"] for p in open_positions}
 
+
+    # -- Configurable gate thresholds (DB > code default) ----------------- 
+    HARD_BLOCK_WIN_RATE      = get_config(conn, 'hard_block_min_win_rate', 0.35, float)
+    HARD_BLOCK_BULLISH_CONF  = get_config(conn, 'hard_block_max_conf', 0.70, float)
+    HARD_BLOCK_MIXED_CONF    = get_config(conn, 'hard_block_mixed_conf', 0.55, float)
+    RECENT_WINDOW_SIZE       = 15     # predictions in recent-window lookback
+    RECENT_WINDOW_MIN        = 5      # min samples before recent window overrides
+
+    # Dynamic win rates from prediction outcomes (last 90 days)
+    # Falls back to hardcoded defaults if insufficient data.
+    _DEFAULT_WIN_RATES = {
+        "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38,
+        "healthcare": 0.35, "consumer": 0.30, "industrials": 0.14,
+        "macro": 0.28, "materials": 0.27, "financials": 0.21, "defense": 0.50,
+    }
+    _hardcoded_win_rates = get_config(conn, 'sector_win_rates', _DEFAULT_WIN_RATES, dict)
     for pred in predictions:
         p         = pred.get("prediction", {})
         direction = p.get("direction", "neutral")
@@ -617,23 +642,7 @@ def generate_recommendations(predictions: list[dict],
             )
             continue
 
-        # ── Gate thresholds ──────────────────────────────────────────────
-        # Tightened after causality analysis (2026-09-15 Finding 5).
-        # Bullish needs higher confidence when sector win rate is weak;
-        # mixed directions are blocked unless confidence is solid.
-        HARD_BLOCK_WIN_RATE      = 0.35   # sector win-rate floor for bullish
-        HARD_BLOCK_BULLISH_CONF  = 0.70   # bullish confidence floor under weak sector
-        HARD_BLOCK_MIXED_CONF    = 0.55   # mixed-direction confidence floor
-        RECENT_WINDOW_SIZE       = 15     # predictions in recent-window lookback
-        RECENT_WINDOW_MIN        = 5      # min samples before recent window overrides
-
-        # Dynamic win rates from prediction outcomes (last 90 days)
-        # Falls back to hardcoded defaults if insufficient data.
-        _hardcoded_win_rates = {
-            "ai_infrastructure": 0.44, "technology": 0.44, "energy": 0.38,
-            "healthcare": 0.35, "consumer": 0.30, "industrials": 0.14,
-            "macro": 0.28, "materials": 0.27, "financials": 0.21, "defense": 0.50,
-        }
+        # -- Gate thresholds (loaded above, outside loop) --------------------
         smoothed_wr = _hardcoded_win_rates.get(sector, 0.40)
         if conn:
             # Try semantic win rate first — uses embedding proximity to find

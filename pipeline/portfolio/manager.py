@@ -20,6 +20,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from config_reader import get_config
+
 from portfolio.db import (
     init_db, get_cash_balance, get_open_positions, get_portfolio_value, get_positions_value,
     get_sector_exposure, positions_this_week, open_position, close_position,
@@ -85,7 +87,10 @@ def is_drawdown_breaker(conn) -> bool:
 
     # Raise threshold to 5% for portfolio-wide freeze
     # Sector breakers handle smaller drawdowns more precisely
-    threshold = 0.05
+    # Precedence: DB value > env CONFIG > code default (0.05)
+    threshold = get_config(conn, 'drawdown_circuit_breaker_pct',
+                           float(CONFIG.get('drawdown_circuit_breaker_pct') or 0.05),
+                           float)
 
     rows = conn.execute("""
         SELECT total_value FROM portfolio_snapshots
