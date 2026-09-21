@@ -559,12 +559,14 @@ async function loadData() {
     posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
   } else {
     posBody.innerHTML = positions.map(p => {
-      const useLive  = p.live_price != null;
-      const pnl      = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
-      const liveTag  = useLive
-        ? '<span style="font-size:9px;color:#3fb950;margin-left:3px">●</span>'
-        : '';
-      const pnlCls = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
+      const useLive    = p.live_price != null;
+      const mktOpen    = p.market_open;
+      const isAfterHours = p.price_source === 'after_hours';
+      const pnl        = useLive ? p.live_pnl_pct : (p.unrealized_pct || 0);
+      const ahPnl      = p.ah_pnl_pct;
+      const liveTag    = '';
+      const pnlCls     = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
+      const ahPnlCls   = ahPnl != null ? (ahPnl > 0 ? 'green' : ahPnl < 0 ? 'red' : 'gray') : '';
       const tiers = p.tiers_triggered || 0;
       const tierBadge = tiers > 0
         ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
@@ -574,7 +576,12 @@ async function loadData() {
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
-        <td style="text-align:right" class="${pnlCls}">${useLive ? fmt$(p.live_price) : fmt$(p.current_price||0)}</td>
+        <td style="text-align:right">${mktOpen
+          ? '<span style="color:#10B981;font-size:9px">●</span> ' + fmt$(p.live_price)
+          : (p.regular_close != null && p.after_hours != null)
+            ? '<div style="font-size:11px;color:#8b949e">Close: ' + fmt$(p.regular_close) + '</div><div style="color:#f59e0b">AH: ' + fmt$(p.after_hours) + (ahPnl != null ? ' <span class="' + ahPnlCls + '">(' + fmtPct(ahPnl) + ')</span>' : '') + '</div>'
+            : fmt$(p.live_price || p.current_price || 0)
+        }</td>
         <td style="text-align:right" class="${pnlCls}">${fmtPct(pnl)}</td>
         <td style="text-align:right" class="gray">${fmt$(p.stop_loss)}</td>
         <td style="text-align:center">${tierBadge}</td>
@@ -1173,23 +1180,34 @@ def api_data():
                     if p.get('ticker')]
         if _symbols:
             _extended = get_extended_prices(_symbols)
+            _mkt_open = is_market_open()
             for pos in data.get('positions', []):
                 sym = pos.get('ticker')
                 if sym and sym in _extended:
                     ext = _extended[sym]
-                    live_price = ext.get('after_hours') or ext.get('regular_close')
-                    source = ext.get('price_source', 'snapshot')
-                    pos['live_price']    = live_price
+                    regular_close = ext.get('regular_close')
+                    after_hours   = ext.get('after_hours')
+                    display_price = regular_close if regular_close else after_hours
+                    pos['live_price']    = display_price
+                    pos['regular_close'] = regular_close
+                    pos['after_hours']   = after_hours
+                    pos['market_open']   = _mkt_open
+                    pos['price_source']  = 'live' if _mkt_open else 'after_hours'
                     pos['live_pnl_pct']  = round(
-                        (live_price - pos['entry_price']) / pos['entry_price'] * 100, 2
-                    ) if pos.get('entry_price') and live_price else None
+                        (display_price - pos['entry_price']) / pos['entry_price'] * 100, 2
+                    ) if display_price and pos.get('entry_price') else None
                     pos['live_value']    = round(
-                        live_price * pos.get('shares', 0), 2
-                    ) if live_price else None
+                        display_price * pos.get('shares', 0), 2
+                    ) if display_price else None
                     pos['live_pnl']      = round(
                         pos['live_value'] - pos.get('cost_basis', 0), 2
                     ) if pos.get('live_value') else None
-                    pos['price_source']  = source
+                    if not _mkt_open and after_hours and pos.get('entry_price'):
+                        pos['ah_pnl_pct'] = round(
+                            (after_hours - pos['entry_price']) / pos['entry_price'] * 100, 2
+                        )
+                        pos['ah_value']   = round(after_hours * pos.get('shares', 0), 2)
+                        pos['ah_pnl']     = round(pos['ah_value'] - pos.get('cost_basis', 0), 2)
                 else:
                     pos['price_source']  = 'snapshot'
     except Exception as e:
