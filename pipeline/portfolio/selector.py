@@ -658,7 +658,8 @@ def generate_recommendations(predictions: list[dict],
         }
         try:
             import sqlite3 as _sql
-            _tconn = _sql.connect(str(Path(__file__).parent.parent.parent / "data" / "paper_trading.db"))
+            from config import PAPER_DB as _PAPER_DB
+            _tconn = _sql.connect(str(_PAPER_DB))
             _trim = _tconn.execute(
                 "SELECT ltft, stft FROM sector_trim WHERE sector=?", (sector,)
             ).fetchone()

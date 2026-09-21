@@ -104,11 +104,16 @@ def seed_static_rules(conn: sqlite3.Connection) -> None:
         ).fetchone()
 
         if existing:
-            conn.execute("""
-                UPDATE inference_rules
-                SET sectors = ?, confidence = ?, updated_at = ?, source = 'static'
-                WHERE trigger = ?
-            """, (json.dumps(sectors), 0.9, now, trigger))
+            # Skip update if user has modified confidence away from default 0.9
+            # This preserves DB-level overrides made by the operator
+            if existing[0] == 0.9:
+                conn.execute("""
+                    UPDATE inference_rules
+                    SET sectors = ?, updated_at = ?, source = 'static'
+                    WHERE trigger = ?
+                """, (json.dumps(sectors), now, trigger))
+            else:
+                log.debug(f"Skipping seed update for '{trigger}' — user-modified confidence {existing[0]}")
         else:
             conn.execute("""
                 INSERT INTO inference_rules
