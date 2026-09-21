@@ -5,6 +5,7 @@ Tracks simulated positions, P&L, and prediction accuracy
 Provides feedback loop for tuning model confidence and rule weights
 """
 
+import sys
 import sqlite3
 import json
 import os
@@ -13,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from config import PAPER_DB
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from sector_etf import get_sector_etf
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -236,6 +240,29 @@ def write_rule_performance(conn: sqlite3.Connection,
         log.debug(f"No contributing rules found for prediction #{prediction_id}")
         return
 
+    # Resolve real sector from the prediction query
+    sector = "SPY"
+    event_type = "other"
+    pred_row = conn.execute(
+        "SELECT query FROM predictions WHERE id = ?",
+        (prediction_id,)
+    ).fetchone()
+    if pred_row:
+        query_text = pred_row[0]
+        sector = get_sector_etf(query_text)
+        # Look up event_type from signal_ledger
+        try:
+            sl_row = conn.execute(
+                "SELECT event_type FROM signal_ledger "
+                "WHERE query LIKE ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (f"%{query_text[:50]}%",)
+            ).fetchone()
+            if sl_row and sl_row[0]:
+                event_type = sl_row[0]
+        except Exception:
+            pass
+
     inserted = 0
     for trigger in sorted(triggers):
         # Idempotency check: skip if already recorded
@@ -249,7 +276,7 @@ def write_rule_performance(conn: sqlite3.Connection,
             continue
 
         # Put context into notes as compact key=value string
-        notes_str = f"sector=prediction;event_type=verification;direction={direction}"
+        notes_str = f"sector={sector};event_type={event_type};direction={direction}"
 
         conn.execute(
             "INSERT INTO rule_performance "
