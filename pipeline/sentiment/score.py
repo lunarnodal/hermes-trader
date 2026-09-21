@@ -7,6 +7,7 @@ Reads queue files, scores each article via Ollama, writes structured signals
 import json
 import os
 import logging
+import re
 
 AUDIT_MODE = os.getenv("AUDIT_MODE", "false").lower() == "true"
 import requests
@@ -76,7 +77,9 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of up to 5 most relevant stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or [] — limit to primary tickers only, not every company mentioned
 - sectors: array of up to 3 PRIMARY affected sectors only (no indirect, no exhaustive lists)
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "editorial_opinion", "non_market_noise", "other"
+  editorial_opinion: opinion columns, analyst commentary pieces, editorials not tied to a specific market event — use when the article is primarily an opinion piece with no concrete event trigger
+  non_market_noise: lifestyle articles, promotional content, show recaps, podcast episode summaries, flash sale announcements, "case for/against" lists with no market trigger — tag these NOT as "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
@@ -117,7 +120,9 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of up to 5 most relevant stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or [] — limit to primary tickers only, not every company mentioned
 - sectors: array of up to 3 PRIMARY affected sectors only (no indirect, no exhaustive lists) — see inference rules below
-- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "other"
+- event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "editorial_opinion", "non_market_noise", "other"
+  editorial_opinion: opinion columns, analyst commentary pieces, editorials not tied to a specific market event — use when the article is primarily an opinion piece with no concrete event trigger
+  non_market_noise: lifestyle articles, promotional content, show recaps, podcast episode summaries, flash sale announcements, "case for/against" lists with no market trigger — tag these NOT as "other"
   ai_infrastructure: data center construction, GPU/chip demand, power demand for AI, hyperscaler capex, cooling systems, networking for AI clusters — tag ALL companies in the supply chain
   leadership_transition: appoints [person] as [corporate title]. Classification rules:
     (1) CLASSIFY when ALL match: contains 'appoints' pattern AND a person name is present AND a corporate title is present (CEO, CFO, COO, CTO, CDO, VP, president, director, officer, board)
@@ -202,6 +207,67 @@ def _save_new_themes(new_themes: list[str]) -> None:
             log.info(f"New themes discovered and saved: {added}")
     except Exception as e:
         log.warning(f"Could not save new themes: {e}")
+
+
+# ─── Noise pre-filter ─────────────────────────────────────────────
+
+# Feeds known to produce editorial/opinion content regularly
+OPINION_FEEDS = frozenset({
+    "seeking-alpha",
+})
+
+# Title-shape patterns that signal non-market noise (conservative — match structure, not keywords)
+NOISE_PATTERNS = [
+    # "The case for ... / against ..." opinion lists
+    re.compile(r'^the case (?:for|against) .+', re.IGNORECASE),
+    # "Why ... deserves to be ..." opinion shape
+    re.compile(r'deserves to be', re.IGNORECASE),
+    # Podcast/episode recap shapes: "Episode N:", "Podcast: ...", "S01E05: ..."
+    re.compile(r'(?:episode\\s*\\d+|podcast|s\\d{2}e\\d{2})', re.IGNORECASE),
+    # "Sleeping on ...", "... you're sleeping on"
+    re.compile(r'sleeping on', re.IGNORECASE),
+    # Flash sale / promo shapes: "Final Hours", "Flash Sale", "Ends Tonight"
+    re.compile(r'(?:final\\s+(?:hours?|day)|flash\\s+sale|ends\\s+(?:tonight|today|soon|in\\s+\\d+))', re.IGNORECASE),
+    # "... is a recap of ..."
+    re.compile(r'\\brecap\\b', re.IGNORECASE),
+]
+
+def _extract_ticker_count(title: str, summary: str) -> int:
+    """Count distinct tickers mentioned in title + summary via basic regex heuristic.
+    Returns 0 if none found. This is a cheap check, not a full extraction."""
+    text = f"{title} {summary}"
+    # Match common ticker patterns: 1-5 uppercase letters, possibly with $ prefix
+    matches = re.findall(r'\\b[A-Z]{1,5}\\b', text)
+    # Filter to plausible tickers (exclude common words)
+    stopwords = {'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'THIS', 'THAT', 'WITH',
+                 'FROM', 'HAVE', 'BEEN', 'WILL', 'THAN', 'INTO', 'OVER', 'MORE',
+                 'NEW', 'USE', 'OUR', 'OUT', 'WHO', 'ALL', 'CAN', 'HER', 'HAS',
+                 'HIS', 'HOW', 'ITS', 'MAY', 'MIX', 'NOW', 'OWN', 'SAY', 'SHE',
+                 'TWO', 'WHO', 'WHY', 'YOU', 'YES', 'NO', 'UP', 'SO', 'IF',
+                 'DO', 'GO', 'ME', 'WE', 'AN', 'OR', 'IN', 'ON', 'AT', 'BY',
+                 'TO', 'OF', 'AS', 'IS', 'IT', 'HE', 'BE', 'MY', 'DO', 'NO'}
+    tickers = set(m for m in matches if m not in stopwords and len(m) >= 2)
+    return len(tickers)
+
+
+def is_noise(article: dict) -> str | None:
+    """Pre-LLM noise filter: returns event_type tag if article is clearly noise, None otherwise.
+    Uses title-shape patterns + source feed list + zero-ticker check.
+    Conservative threshold — only catches obvious cases to avoid over-filtering."""
+    title   = article.get("title", "")
+    summary = (article.get("summary", "") or "")
+    source  = article.get("source", "")
+
+    # Check noise patterns against title
+    for pattern in NOISE_PATTERNS:
+        if pattern.search(title):
+            return "non_market_noise"
+
+    # Opinion feeds + zero-ticker articles are likely editorial/opinion
+    if source in OPINION_FEEDS and _extract_ticker_count(title, summary) == 0:
+        return "editorial_opinion"
+
+    return None
 
 
 def score_article(article: dict, retries: int = 2) -> dict | None:
@@ -356,7 +422,22 @@ def process_queue(queue_file: Path) -> Path | None:
 
     for i, article in enumerate(articles):
         log.info(f"  [{i+1}/{len(articles)}] {article['source']} — {article['title'][:60]}")
-        score = score_article(article)
+
+        # Pre-LLM noise filter — skip costly LLM call for obvious noise
+        noise_tag = is_noise(article)
+        if noise_tag:
+            log.info(f"  [NOISE] {noise_tag}: {article['title'][:50]}")
+            score = {
+                "sentiment": "neutral",
+                "confidence": 0.0,
+                "tickers": [],
+                "sectors": [],
+                "event_type": noise_tag,
+                "macro_themes": [],
+                "summary": f"Filtered as {noise_tag}: {article['title']}",
+            }
+        else:
+            score = score_article(article)
 
         if score is None:
             log.warning(f"  Failed to score: {article['guid'][:12]}")
