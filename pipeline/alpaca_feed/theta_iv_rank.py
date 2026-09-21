@@ -116,6 +116,7 @@ def _get_market_regime(etf: str, stock_client) -> str:
 def _compute_iv_rank(current_iv: float, historical_ivs: list[float]) -> float:
     """IV Rank = (current - 52w_low) / (52w_high - 52w_low) * 100"""
     if not historical_ivs or len(historical_ivs) < 10:
+        log.warning("finnhub fallback: iv_rank fabricated as 50 (insufficient history: %d samples), token or API missing?", len(historical_ivs) if historical_ivs else 0)
         return 50.0
     iv_low  = min(historical_ivs)
     iv_high = max(historical_ivs)
@@ -172,6 +173,7 @@ def get_sector_market_data(sector: str, conn: sqlite3.Connection = None) -> dict
         "underlying_price":       100.0,
         "etf":                    etf,
     }
+    log.warning("finnhub fallback: theta defaults fabricated for " + sector + " (iv_rank=50, premium_yield=0.02, regime=sideways), token or API missing?")
 
     try:
         stock_client, options_client = _get_alpaca_clients()
@@ -270,6 +272,7 @@ def get_all_sector_market_data(conn: sqlite3.Connection = None) -> dict[str, dic
             results[sector] = get_sector_market_data(sector, conn)
         except Exception as e:
             log.warning(f"[THETA] Failed market data for {sector}: {e}")
+            log.warning("finnhub fallback: theta defaults fabricated for " + sector + " (iv_rank=50, premium_yield=0.02), token or API missing?")
             results[sector] = {
                 "iv_rank": 50.0, "premium_yield": 0.02,
                 "market_regime": "sideways", "open_interest": 500,

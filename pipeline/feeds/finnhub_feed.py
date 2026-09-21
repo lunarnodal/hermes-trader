@@ -49,6 +49,7 @@ def fetch_market_news(category: str = "general", limit: int = 50) -> list[dict]:
 def fetch_company_news(ticker: str, days_back: int = 1) -> list[dict]:
     """Fetch news for a specific ticker"""
     if not FINNHUB_TOKEN:
+        log.warning("finnhub fallback: company-news for " + ticker + " fabricated (empty), token missing?")
         return []
     try:
         date_to   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
