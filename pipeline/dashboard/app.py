@@ -777,16 +777,35 @@ async function loadData() {
     vixDisplay.innerHTML = `<span style="color:${vixColor};font-weight:600">VIX ${vix.vix.toFixed(1)}</span> <span style="color:#8b949e;font-size:11px">— ${vix.reason.split('—')[1]?.trim() || vix.action}</span>`;
   }
 
-  // Closed positions table
-  document.getElementById('closedBody').innerHTML = closed.length
-    ? closed.map(c => `<tr>
-        <td style="font-weight:600">${c.ticker}</td>
-        <td style="text-align:right">${fmt$(c.entry)}</td>
-        <td style="text-align:right">${fmt$(c.exit)}</td>
-        <td style="text-align:right" class="${c.pnl>=0?'green':'red'}">${c.pnl>=0?'+':''}${fmt$(c.pnl)}</td>
-        <td class="gray" style="font-size:11px">${c.reason?.split(' ')[0]||'—'}</td>
-        <td class="timestamp">${c.date}</td>
-      </tr>`).join('')
+  // Closed positions table — equity + theta combined
+  const allClosed = [
+    ...closed.map(c => ({...c, _type: 'equity'})),
+    ...thetaEvents.filter(t => t.status !== 'open')
+  ].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  document.getElementById('closedBody').innerHTML = allClosed.length
+    ? allClosed.map(c => {
+        if (c._type === 'theta') {
+          const pnlCls3 = c.pnl > 0 ? 'green' : c.pnl < 0 ? 'red' : 'gray';
+          const evtLabel = c.event === 'profit_close' ? 'Profit' : c.event === 'defensive_close' ? 'Defensive' : c.event === 'expired' ? 'Expired' : c.status === 'assigned' ? 'Assigned' : c.event || c.status;
+          return '<tr style="background:rgba(245,158,11,0.05)">'
+            + '<td style="font-weight:600;color:#f59e0b">' + c.ticker + ' ' + c.instrument + '</td>'
+            + '<td style="text-align:right" class="gray">$' + c.strike + ' strike</td>'
+            + '<td style="text-align:right" class="gray">$' + fmt$(c.premium) + ' prem</td>'
+            + '<td style="text-align:right" class="' + pnlCls3 + '">' + (c.pnl != null ? (c.pnl >= 0 ? '+' : '') + fmt$(c.pnl) : '—') + '</td>'
+            + '<td class="gray" style="font-size:11px">' + evtLabel + '</td>'
+            + '<td class="timestamp">' + c.date + '</td>'
+            + '</tr>';
+        }
+        return '<tr>'
+          + '<td style="font-weight:600">' + c.ticker + '</td>'
+          + '<td style="text-align:right">' + fmt$(c.entry) + '</td>'
+          + '<td style="text-align:right">' + fmt$(c.exit) + '</td>'
+          + '<td style="text-align:right" class="' + (c.pnl>=0?'green':'red') + '">' + (c.pnl>=0?'+':'') + fmt$(c.pnl) + '</td>'
+          + '<td class="gray" style="font-size:11px">' + (c.reason?.split(' ')[0]||'—') + '</td>'
+          + '<td class="timestamp">' + c.date + '</td>'
+          + '</tr>';
+      }).join('')
     : '<tr><td colspan="6" class="gray" style="text-align:center;padding:12px">No closed positions</td></tr>';
 
   // Load theta card after all other data
