@@ -69,6 +69,87 @@ from sector_etf import SECTOR_ETFS
 MIN_SIGNALS_FOR_STOCK = 2
 MIN_SIGNALS_BEARISH_OVERRIDE = 3  # bearish signals needed to suppress bullish entry
 
+# Signal ledger schema validation & write-rate-limit state
+_LEDBER_EXPECTED_COLS = {
+    created_at, query, sector, direction,
+    raw_confidence, adj_confidence, gate_failed,
+    gate_reason, sector_win_rate, vix_at_time, event_type,
+}
+_ledger_validated   = False
+_ledger_write_ok    = True
+_last_ledger_warn_ts = 0.0
+_LEDGER_WARN_COOLDOWN = 60.0  # seconds
+
+
+def _validate_signal_ledger(db_path: str) -> bool:
+    """Validate signal_ledger table has all expected columns.
+
+    On first call only.  If columns are missing, attempts ALTER TABLE ADD COLUMN
+    for each; if that fails too, disables ledger writes and logs a loud WARNING.
+    Returns True if writes are safe, False if disabled.
+    """
+    global _ledger_validated, _ledger_write_ok
+    if _ledger_validated:
+        return _ledger_write_ok
+
+    import sqlite3
+    _ledger_validated = True
+    try:
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute("PRAGMA table_info(signal_ledger)").fetchall()
+        existing = {r[1] for r in rows}  # column name is index 1
+        missing = _LEDBER_EXPECTED_COLS - existing
+        conn.close()
+
+        if not missing:
+            return True
+
+        log.error(
+            f"signal_ledger missing column(s): {', '.join(sorted(missing))} — "
+            f"attempting ALTER TABLE"
+        )
+
+        # Try to ADD each missing column (TEXT, nullable)
+        for col in sorted(missing):
+            try:
+                conn = sqlite3.connect(db_path)
+                conn.execute(f"ALTER TABLE signal_ledger ADD COLUMN {col} TEXT")
+                conn.commit()
+                conn.close()
+                log.info(f"Added missing column {col} to signal_ledger")
+            except sqlite3.Error as ae:
+                log.error(
+                    f"ALTER TABLE signal_ledger ADD COLUMN {col} failed: {ae}"
+                )
+                _ledger_write_ok = False
+
+        if _ledger_write_ok:
+            return True
+
+        # All ALTER attempts failed — disable writes with loud warning
+        log.warning(
+            "========================================\n"
+            "SIGNAL LEDGER WRITES DISABLED: unable to "
+            "repair schema. Missing columns: "
+            f"{', '.join(sorted(missing))}\n"
+            "All rejected signals will be silently "
+            "dropped until schema is fixed.\n"
+            "========================================"
+        )
+        return False
+
+    except sqlite3.Error as e:
+        _ledger_write_ok = False
+        log.error(f"signal_ledger validation failed: {e}")
+        log.warning(
+            "========================================\n"
+            "SIGNAL LEDGER WRITES DISABLED: cannot "
+            "access table. Rejected signals "
+            "will be dropped.\n"
+            "========================================"
+        )
+        return False
+
 # Per event_type threshold overrides
 # When an event_type has an entry here, its specific thresholds and
 # weight_multiplier replace the global defaults for scoring/filtering.
@@ -400,13 +481,19 @@ def _log_rejected_signal(sector: str, query: str, direction: str,
                           sector_win_rate: float = None, vix: float = None,
                           event_type: str = "other") -> None:
     """Write rejected signal to ledger for future outcome tracking."""
+    import time
+    from config import PAPER_DB
+    # In AUDIT_MODE write to audit-specific ledger DB if configured,
+    # otherwise use PAPER_DB (which points to staging DB via DATA_DIR)
+    _db = Path(os.getenv("AUDIT_LEDGER_DB", str(PAPER_DB)))
+
+    # Validate schema on first call
+    if not _validate_signal_ledger(str(_db)):
+        return
+
     try:
         import sqlite3
         from datetime import datetime, timezone
-        from config import PAPER_DB
-        # In AUDIT_MODE write to audit-specific ledger DB if configured,
-        # otherwise use PAPER_DB (which points to staging DB via DATA_DIR)
-        _db = Path(os.getenv("AUDIT_LEDGER_DB", str(PAPER_DB)))
         conn = sqlite3.connect(str(_db))
         conn.execute("""
             INSERT INTO signal_ledger
@@ -422,8 +509,15 @@ def _log_rejected_signal(sector: str, query: str, direction: str,
         ))
         conn.commit()
         conn.close()
-    except Exception as e:
-        log.warning(f"Signal ledger write failed (non-fatal): {e}")
+    except sqlite3.Error as e:
+        global _last_ledger_warn_ts
+        now = time.time()
+        if now - _last_ledger_warn_ts >= _LEDGER_WARN_COOLDOWN:
+            _last_ledger_warn_ts = now
+            log.warning(
+                f"Signal ledger write failed (non-fatal, rate-limited): "
+                f"{type(e).__name__}: {e}"
+            )
 
 
 def generate_recommendations(predictions: list[dict],
