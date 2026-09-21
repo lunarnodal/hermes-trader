@@ -789,7 +789,7 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
                 log.info(f"  {action:6s} {ticker:6s}")
 
     # ── Step 4: Execute (if not dry run and in entry window) ──────────────────
-        if not dry_run and (is_entry_window() or True):  # remove 'or True' for live
+        if not dry_run and is_entry_window():
             entries = execute_recommendations(
                 conn, recommendations, dry_run=False
             )
