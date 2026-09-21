@@ -209,7 +209,7 @@ def _save_new_themes(new_themes: list[str]) -> None:
         log.warning(f"Could not save new themes: {e}")
 
 
-# ─── Noise pre-filter ─────────────────────────────────────────────
+# ──── Noise pre-filter ────────────────────────────────
 
 # Feeds known to produce editorial/opinion content regularly
 OPINION_FEEDS = frozenset({
@@ -223,13 +223,13 @@ NOISE_PATTERNS = [
     # "Why ... deserves to be ..." opinion shape
     re.compile(r'deserves to be', re.IGNORECASE),
     # Podcast/episode recap shapes: "Episode N:", "Podcast: ...", "S01E05: ..."
-    re.compile(r'(?:episode\\s*\\d+|podcast|s\\d{2}e\\d{2})', re.IGNORECASE),
+    re.compile(r'(?:episode\s*\d+|podcast|s\d{2}e\d{2})', re.IGNORECASE),
     # "Sleeping on ...", "... you're sleeping on"
     re.compile(r'sleeping on', re.IGNORECASE),
     # Flash sale / promo shapes: "Final Hours", "Flash Sale", "Ends Tonight"
-    re.compile(r'(?:final\\s+(?:hours?|day)|flash\\s+sale|ends\\s+(?:tonight|today|soon|in\\s+\\d+))', re.IGNORECASE),
+    re.compile(r'(?:final\s+(?:hours?|day)|flash\s+sale|ends\s+(?:tonight|today|soon|in\s+\d+))', re.IGNORECASE),
     # "... is a recap of ..."
-    re.compile(r'\\brecap\\b', re.IGNORECASE),
+    re.compile(r'\brecap\b', re.IGNORECASE),
 ]
 
 def _extract_ticker_count(title: str, summary: str) -> int:
@@ -237,7 +237,7 @@ def _extract_ticker_count(title: str, summary: str) -> int:
     Returns 0 if none found. This is a cheap check, not a full extraction."""
     text = f"{title} {summary}"
     # Match common ticker patterns: 1-5 uppercase letters, possibly with $ prefix
-    matches = re.findall(r'\\b[A-Z]{1,5}\\b', text)
+    matches = re.findall(r'\b[A-Z]{1,5}\b', text)
     # Filter to plausible tickers (exclude common words)
     stopwords = {'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'THIS', 'THAT', 'WITH',
                  'FROM', 'HAVE', 'BEEN', 'WILL', 'THAN', 'INTO', 'OVER', 'MORE',
