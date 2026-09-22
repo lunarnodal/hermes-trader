@@ -22,7 +22,8 @@ def get_trading_client():
     return TradingClient(ALPACA_KEY, ALPACA_SECRET, paper=PAPER)
 
 
-def place_market_order(ticker: str, qty: float, side: str, reason: str = "") -> dict:
+def place_market_order(ticker: str, qty: float, side: str, reason: str = "",
+                        client_order_id: str = "") -> dict:
     """Place a market order on the hackathon paper account."""
     try:
         from alpaca.trading.client import TradingClient
@@ -36,24 +37,26 @@ def place_market_order(ticker: str, qty: float, side: str, reason: str = "") -> 
             qty=qty,
             side=order_side,
             time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id if client_order_id else None,
         )
         order = client.submit_order(req)
         result = {
-            'success':  True,
-            'order_id': str(order.id),
-            'ticker':   ticker,
-            'side':     side,
-            'qty':      qty,
-            'status':   str(order.status),
-            'reason':   reason,
-            'account':  'hackathon',
+            'success':         True,
+            'order_id':        str(order.id),
+            'client_order_id': client_order_id,
+            'ticker':          ticker,
+            'side':            side,
+            'qty':             qty,
+            'status':          str(order.status),
+            'reason':          reason,
+            'account':         'hackathon',
         }
-        log.info(f"Hackathon order: {side.upper()} {qty} {ticker} [{order.id}]")
+        log.info(f"Hackathon order: {side.upper()} {qty} {ticker} [{order.id}] cid={client_order_id}")
         return result
     except Exception as e:
         log.error(f"Hackathon order failed: {ticker} {side} {qty}: {e}")
-        return {'success': False, 'ticker': ticker, 'side': side, 'qty': qty, 'error': str(e)}
-
+        return {'success': False, 'client_order_id': client_order_id,
+                'ticker': ticker, 'side': side, 'qty': qty, 'error': str(e)}
 
 def get_position(ticker: str) -> dict | None:
     """Get current position for a ticker in hackathon account."""

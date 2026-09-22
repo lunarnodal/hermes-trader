@@ -30,15 +30,17 @@ def get_trading_client():
 def place_market_order(ticker: str,
                         qty: float,
                         side: str,
-                        reason: str = "") -> dict:
+                        reason: str = "",
+                        client_order_id: str = "") -> dict:
     """
     Place a market order on Alpaca.
     
     Args:
-        ticker: stock symbol
-        qty:    number of shares (positive)
-        side:   'buy' or 'sell'
-        reason: human-readable reason for logging
+        ticker:          stock symbol
+        qty:             number of shares (positive)
+        side:            'buy' or 'sell'
+        reason:          human-readable reason for logging
+        client_order_id: deterministic ID for dedup (packetloss404 pattern)
     
     Returns:
         dict with order details or error
@@ -53,37 +55,40 @@ def place_market_order(ticker: str,
         order_side = OrderSide.BUY if side.lower() == 'buy' else OrderSide.SELL
 
         req = MarketOrderRequest(
-            symbol      = ticker,
-            qty         = qty,
-            side        = order_side,
-            time_in_force = TimeInForce.DAY,
+            symbol         = ticker,
+            qty            = qty,
+            side           = order_side,
+            time_in_force  = TimeInForce.DAY,
+            client_order_id = client_order_id if client_order_id else None,
         )
 
         order = client.submit_order(req)
 
         result = {
-            'success':  True,
-            'order_id': str(order.id),
-            'ticker':   ticker,
-            'side':     side,
-            'qty':      qty,
-            'status':   str(order.status),
-            'reason':   reason,
+            'success':         True,
+            'order_id':        str(order.id),
+            'client_order_id': client_order_id,
+            'ticker':          ticker,
+            'side':            side,
+            'qty':             qty,
+            'status':          str(order.status),
+            'reason':          reason,
         }
         log.info(
             f"Alpaca order placed: {side.upper()} {qty} {ticker} "
-            f"[{order.id}] status={order.status}"
+            f"[{order.id}] cid={client_order_id} status={order.status}"
         )
         return result
 
     except Exception as e:
         log.error(f"Alpaca order failed: {ticker} {side} {qty}: {e}")
         return {
-            'success': False,
-            'ticker':  ticker,
-            'side':    side,
-            'qty':     qty,
-            'error':   str(e),
+            'success':         False,
+            'client_order_id': client_order_id,
+            'ticker':          ticker,
+            'side':            side,
+            'qty':             qty,
+            'error':           str(e),
         }
 
 

@@ -42,6 +42,22 @@ try:
 except Exception:
     pass
 
+import hashlib
+
+
+def generate_client_order_id(strategy: str, ticker: str, side: str, qty: float) -> str:
+    """
+    Deterministic, strategy-tagged client_order_id (packetloss404 execution.py:300-330).
+
+    Includes ISO timestamp so same-day re-entries do not collide.
+    Format: ht-{strategy}-{ticker[:4]}-{date}-{8-char blake2s hash}
+    """
+    now = datetime.now(timezone.utc)
+    payload = f"{strategy}:{ticker}:{side}:{qty}:{now.isoformat()}"
+    h = hashlib.blake2s(payload.encode(), digest_size=8).hexdigest()
+    return f"ht-{strategy}-{ticker[:4]}-{now.date().isoformat()}-{h}"
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -63,6 +79,69 @@ MARKET_HOLIDAYS_2026 = {
     date(2026, 11, 27),  # Black Friday (early close — treat as holiday)
     date(2026, 12, 25),  # Christmas
 }
+
+
+class ExecutionBreaker:
+    """
+    Circuit breaker for Alpaca execution failures (dinaltium guards.py:261-300).
+    Trips after N consecutive failures; stays tripped until manually reset.
+    State persists to a JSON file so it survives process restarts.
+    """
+    STATE_PATH = Path("/tmp/alpaca_breaker_state.json")
+    CONSECUTIVE_FAILURE_LIMIT = 3
+
+    def __init__(self):
+        self._tripped = False
+        self._consecutive_failures = 0
+        self._load_state()
+
+    def _load_state(self) -> None:
+        if self.STATE_PATH.exists():
+            try:
+                state = json.loads(self.STATE_PATH.read_text())
+                self._tripped = state.get("tripped", False)
+                self._consecutive_failures = state.get("consecutive_failures", 0)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    def _save_state(self) -> None:
+        self.STATE_PATH.write_text(json.dumps({
+            "tripped": self._tripped,
+            "consecutive_failures": self._consecutive_failures,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }))
+
+    @property
+    def is_tripped(self) -> bool:
+        return self._tripped
+
+    def record_success(self) -> None:
+        self._consecutive_failures = 0
+        self._save_state()
+
+    def record_failure(self) -> None:
+        if self._tripped:
+            return  # already tripped — no-op
+        self._consecutive_failures += 1
+        self._save_state()
+        if self._consecutive_failures >= self.CONSECUTIVE_FAILURE_LIMIT:
+            self._tripped = True
+            self._save_state()
+            log.warning(
+                "EXECUTION BREAKER TRIPPED: %d consecutive Alpaca failures — "
+                "all trading halted until manual reset",
+                self._consecutive_failures,
+            )
+
+    def reset(self) -> None:
+        self._tripped = False
+        self._consecutive_failures = 0
+        self._save_state()
+        log.info("Execution breaker manually reset")
+
+
+# Global breaker instance
+_execution_breaker = ExecutionBreaker()
 
 
 try:
@@ -140,13 +219,23 @@ def is_sector_breaker(sector: str, conn) -> bool:
 
 def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") -> None:
     """Mirror trade to Alpaca paper account — non-fatal if it fails"""
+    if _execution_breaker.is_tripped:
+        log.warning(
+            "Alpaca mirror SKIPPED: execution breaker is tripped "
+            "(ticker=%s action=%s) — call _execution_breaker.reset() to clear",
+            ticker, action,
+        )
+        return
     try:
         from alpaca_feed.trading import place_market_order
+        client_id = generate_client_order_id("llm", ticker, action.lower(), shares)
         if action == "BUY":
-            place_market_order(ticker, shares, "buy", reason)
+            place_market_order(ticker, shares, "buy", reason, client_order_id=client_id)
         elif action in ("SELL", "PARTIAL_SELL"):
-            place_market_order(ticker, shares, "sell", reason)
+            place_market_order(ticker, shares, "sell", reason, client_order_id=client_id)
+        _execution_breaker.record_success()
     except Exception as _e:
+        _execution_breaker.record_failure()
         log.warning(f"Alpaca mirror failed (non-fatal): {_e}")
     # Also mirror to hackathon account
     _alpaca_mirror_hackathon(action, ticker, shares, reason)
@@ -154,10 +243,13 @@ def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") ->
 
 def _alpaca_mirror_hackathon(action: str, ticker: str, shares: float, reason: str = "") -> None:
     """Mirror trade to hackathon Alpaca account — validates position before selling"""
+    if _execution_breaker.is_tripped:
+        return  # already skipped in _alpaca_mirror
     try:
         from alpaca_feed.trading_hackathon import place_market_order, get_position
+        client_id = generate_client_order_id("llm", ticker, action.lower(), shares)
         if action == "BUY":
-            place_market_order(ticker, shares, "buy", reason)
+            place_market_order(ticker, shares, "buy", reason, client_order_id=client_id)
         elif action in ("SELL", "PARTIAL_SELL"):
             # Only sell if position exists in hackathon account
             pos = get_position(ticker)
@@ -168,7 +260,7 @@ def _alpaca_mirror_hackathon(action: str, ticker: str, shares: float, reason: st
             sell_shares = min(shares, available)
             if sell_shares <= 0:
                 return
-            place_market_order(ticker, sell_shares, "sell", reason)
+            place_market_order(ticker, sell_shares, "sell", reason, client_order_id=client_id)
     except Exception as _e:
         log.warning(f"Hackathon mirror failed (non-fatal): {_e}")
 
@@ -641,12 +733,36 @@ def save_recommendations(conn, recommendations: list[dict]) -> None:
     conn.commit()
 
 
+_HEARTBEAT_PATH = Path("/tmp/portfolio_cycle_heartbeat.json")
+
+
+def _update_heartbeat() -> None:
+    """Record cycle timestamp; log minutes_since_last_cycle for monitoring."""
+    now = datetime.now(timezone.utc)
+    minutes = None
+    if _HEARTBEAT_PATH.exists():
+        try:
+            old = json.loads(_HEARTBEAT_PATH.read_text())
+            prev = datetime.fromisoformat(old.get("last_cycle_at", ""))
+            minutes = round((now - prev).total_seconds() / 60, 1)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+    _HEARTBEAT_PATH.write_text(json.dumps({
+        "last_cycle_at": now.isoformat(),
+    }))
+    if minutes is not None:
+        log.info(f"Cycle heartbeat: {minutes} minutes since last cycle")
+    else:
+        log.info("Cycle heartbeat: first cycle (no previous timestamp)")
+
+
 def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     """
     Main portfolio management cycle
     dry_run=True: generate recommendations only, don't execute
     dry_run=False: execute trades
     """
+    _update_heartbeat()
     log.info(f"═══ Portfolio cycle starting "
              f"({'DRY RUN' if dry_run else 'LIVE'}) ═══")
 
