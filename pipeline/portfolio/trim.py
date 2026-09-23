@@ -288,6 +288,97 @@ def get_trim_state() -> dict:
     return {r[0]: {"ltft": r[1], "stft": r[2], "updated_at": r[3]} for r in rows}
 
 
+def reconcile_industrials_trim() -> float:
+    """
+    Reconcile the ``industrials`` sector LTFT trim with recent verified outcomes.
+
+    Reads current LTFT from sector_trim, fetches trailing-7d win rate and
+    average direction confidence from predictions.  If the sector is
+    outperforming (win_rate > 60%) but carries a stale deep penalty
+    (abs(LTFT) > 25%), computes a fresh trim from the recent window,
+    writes it to the DB, and returns the reconciled value.
+    Otherwise returns the legacy LTFT unchanged (no write).
+
+    Idempotent — safe to call multiple times per cycle.
+
+    Returns:
+        Final trim value for the ``industrials`` sector, clamped to [-0.5, 0.5].
+    """
+    conn = sqlite3.connect(PAPER_DB)
+
+    # 1. Read current LTFT from config
+    row = conn.execute(
+        "SELECT ltft FROM sector_trim WHERE sector=?", ("industrials",)
+    ).fetchone()
+    current_ltft = row[0] if row else -0.10
+
+    # 2. Fetch trailing-7d verified win rate and avg confidence
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    row2 = conn.execute(
+        """SELECT COUNT(*), AVG(confidence),
+                  SUM(CASE WHEN was_correct=1 THEN 1 ELSE 0 END)*1.0/COUNT(*)
+           FROM predictions
+           WHERE verified_at >= ? AND was_correct IS NOT NULL
+             AND (query LIKE '%industrials%'
+                  OR query LIKE '%manufacturing%'
+                  OR query LIKE '%infrastructure%'
+                  OR query LIKE '%machinery%'
+                  OR query LIKE '%Caterpillar%'
+                  OR query LIKE '%CAT%')""",
+        (cutoff,)
+    ).fetchone()
+
+    count = row2[0] if row2 else 0
+    avg_conf = row2[1] if row2 and row2[1] is not None else 0.0
+    win_rate = row2[2] if row2 and row2[2] is not None else 0.0
+
+    # Guard: need at least 2 outcomes to trust the signal
+    if count < 2:
+        log.info(
+            f"[RECONCILE] industrials: only {count} outcomes in trailing 7d — "
+            f"keeping legacy LTFT {current_ltft:+.3f}"
+        )
+        conn.close()
+        return current_ltft
+
+    # 3. Freshness / contradiction flag
+    penalty_depth = abs(current_ltft)
+    flagged = win_rate > 0.60 and penalty_depth > 0.25
+
+    if not flagged:
+        log.info(
+            f"[RECONCILE] industrials: win_rate={win_rate:.0%} "
+            f"penalty_depth={penalty_depth:.0%} — no contradiction, "
+            f"keeping legacy LTFT {current_ltft:+.3f}"
+        )
+        conn.close()
+        return current_ltft
+
+    # 4. Re-derive trim from recent window
+    miss_rate = 1.0 - win_rate
+    new_ltft = -(miss_rate * avg_conf)
+    new_ltft = max(-0.5, min(0.5, new_ltft))
+
+    # 5. Write reconciled value to DB with provenance note
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute("""
+        UPDATE sector_trim
+        SET ltft=?, updated_at=?
+        WHERE sector=?
+    """, (new_ltft, now, "industrials"))
+    conn.commit()
+
+    log.info(
+        f"[RECONCILE] industrials: FLAGGED "
+        f"(win_rate={win_rate:.0%} penalty_depth={penalty_depth:.0%}) "
+        f"-> LTFT {current_ltft:+.3f} -> {new_ltft:+.3f} "
+        f"from {count} outcomes (avg_conf={avg_conf:.2f} miss_rate={miss_rate:.2f})"
+    )
+
+    conn.close()
+    return new_ltft
+
+
 def run_trim_cycle() -> None:
     log.info("═══ Sector trim cycle starting ═══")
 
@@ -296,8 +387,13 @@ def run_trim_cycle() -> None:
     for sector, vals in state.items():
         log.info(f"  {sector}: LTFT={vals['ltft']:+.3f} STFT={vals['stft']:+.3f}")
 
-    # Compute and apply
+    # Compute STFT corrections
     stft = compute_stft()
+
+    # Reconcile industrials LTFT with verified outcomes BEFORE absorption
+    # so the reconciled baseline is what apply_trim reads and persists
+    reconcile_industrials_trim()
+
     apply_trim(stft)
 
     # Log new state
