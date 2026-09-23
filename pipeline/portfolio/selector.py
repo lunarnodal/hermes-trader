@@ -72,10 +72,10 @@ MIN_SIGNALS_FOR_STOCK = 2
 MIN_SIGNALS_BEARISH_OVERRIDE = 3  # bearish signals needed to suppress bullish entry
 
 # Signal ledger schema validation & write-rate-limit state
-_LEDBER_EXPECTED_COLS = {
-    created_at, query, sector, direction,
-    raw_confidence, adj_confidence, gate_failed,
-    gate_reason, sector_win_rate, vix_at_time, event_type,
+_LEDGER_EXPECTED_COLS = {
+    "created_at", "query", "sector", "direction",
+    "raw_confidence", "adj_confidence", "gate_failed",
+    "gate_reason", "sector_win_rate", "vix_at_time", "event_type",
 }
 _ledger_validated   = False
 _ledger_write_ok    = True
@@ -100,7 +100,7 @@ def _validate_signal_ledger(db_path: str) -> bool:
         conn = sqlite3.connect(db_path)
         rows = conn.execute("PRAGMA table_info(signal_ledger)").fetchall()
         existing = {r[1] for r in rows}  # column name is index 1
-        missing = _LEDBER_EXPECTED_COLS - existing
+        missing = _LEDGER_EXPECTED_COLS - existing
         conn.close()
 
         if not missing:
