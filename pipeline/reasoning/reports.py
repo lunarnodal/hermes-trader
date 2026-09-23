@@ -316,6 +316,7 @@ By sector: {json.dumps({s: f"{v['correct']}/{v['total']} = {v['win_rate']:.0%}"
 By direction: {json.dumps({d: f"{v['correct']}/{v['total']} = {v['win_rate']:.0%}"
                             for d, v in predictions.get('by_direction', {}).items()}, indent=2)}
 High confidence wrong predictions: {len(predictions.get('high_conf_wrong', []))}
+Critic verdict discrimination: {json.dumps(predictions.get('critic_verdict_stats', {}), indent=2, default=str)}
 """
 
     learning_summary = f"""
@@ -386,6 +387,16 @@ def build_report(period_name: str, since: datetime) -> str:
     rules       = get_rules_data(since)
     lessons     = get_lessons_data(since)
 
+    # Critic verdict discrimination stats
+    try:
+        from paper_trading.db import critic_verdict_stats
+        _c = sqlite3.connect(PAPER_DB)
+        critic_stats = critic_verdict_stats(_c)
+        _c.close()
+    except Exception as e:
+        critic_stats = {"error": str(e)}
+    predictions["critic_verdict_stats"] = critic_stats
+
     log.info(f"Data gathered: {portfolio['total_trades']} trades, "
              f"{predictions['total']} predictions, "
              f"{rules['new_rules']} new rules")
@@ -422,6 +433,11 @@ def build_report(period_name: str, since: datetime) -> str:
 
 ### Rules Added This Period
 {chr(10).join(f"- `{r['trigger']}` ({r['source']})" for r in rules['rules_added'])}
+
+### Critic Verdict Discrimination
+```json
+{json.dumps(critic_stats, indent=2, default=str)}
+```
 
 ### Cash Yield (Shadow BIL Position)
 {cash_yield_summary}

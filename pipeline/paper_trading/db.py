@@ -152,7 +152,7 @@ def verify_prediction(conn: sqlite3.Connection,
     now = datetime.now(timezone.utc).isoformat()
 
     row = conn.execute(
-        "SELECT direction, confidence, reasoning_summary, critic_verdict "
+        "SELECT direction, probability, confidence, reasoning_summary, critic_verdict "
         "FROM predictions WHERE id = ?",
         (prediction_id,)
     ).fetchone()
@@ -161,7 +161,7 @@ def verify_prediction(conn: sqlite3.Connection,
         log.error(f"Prediction #{prediction_id} not found")
         return
 
-    direction, confidence, reasoning_summary, critic_verdict = row
+    direction, probability, confidence, reasoning_summary, critic_verdict = row
     was_correct = 1 if direction == actual_direction else 0
 
     conn.execute("""
@@ -174,7 +174,7 @@ def verify_prediction(conn: sqlite3.Connection,
     # Write rule_performance rows for contributing rules
     try:
         write_rule_performance(conn, prediction_id, was_correct,
-                               direction, confidence, reasoning_summary,
+                               direction, probability, confidence, reasoning_summary,
                                critic_verdict, now)
     except Exception:
         log.exception(f"write_rule_performance failed for prediction #{prediction_id}")
@@ -190,6 +190,7 @@ def write_rule_performance(conn: sqlite3.Connection,
                            prediction_id: int,
                            was_correct: int,
                            direction: str,
+                           probability: float,
                            confidence: float,
                            reasoning_summary: str,
                            critic_verdict: str,
@@ -299,8 +300,80 @@ def write_rule_performance(conn: sqlite3.Connection,
         )
         inserted += 1
 
+    # Critic verdict logging — one row per verdict
+    if critic_verdict and critic_verdict.strip():
+        verdict_trigger = f"critic_verdict:{critic_verdict.strip()}"
+        existing = conn.execute(
+            "SELECT id FROM rule_performance "
+            "WHERE prediction_id = ? AND rule_trigger = ?",
+            (prediction_id, verdict_trigger)
+        ).fetchone()
+        if not existing:
+            prob = probability if probability is not None else 0.5
+            brier = (prob - (1 if was_correct else 0)) ** 2
+            conn.execute(
+                "INSERT INTO rule_performance "
+                "(rule_trigger, evaluated_at, prediction_id, was_correct, "
+                "signal_confidence, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (verdict_trigger, evaluated_at, prediction_id, was_correct,
+                 prob, f"brier={brier:.4f}")
+            )
+            inserted += 1
+
     if inserted > 0:
         log.info(f"Recorded {inserted} rule performance row(s) for prediction #{prediction_id}")
+
+
+def backfill_critic_verdict_performance(conn: sqlite3.Connection) -> int:
+    """One-time idempotent backfill of critic_verdict rows into rule_performance.
+
+    For all already-verified predictions with a non-empty critic_verdict,
+    insert a rule_performance row. Guarded on (rule_trigger, prediction_id)
+    so re-running inserts nothing.
+
+    Returns number of rows inserted.
+    """
+    rows = conn.execute(
+        "SELECT id, critic_verdict, probability, was_correct "
+        "FROM predictions "
+        "WHERE was_correct IS NOT NULL AND critic_verdict != ''"
+    ).fetchall()
+
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    for pred_id, verdict, probability, was_correct in rows:
+        verdict = verdict.strip()
+        if not verdict:
+            continue
+        verdict_trigger = f"critic_verdict:{verdict}"
+
+        existing = conn.execute(
+            "SELECT id FROM rule_performance "
+            "WHERE prediction_id = ? AND rule_trigger = ?",
+            (pred_id, verdict_trigger)
+        ).fetchone()
+        if existing:
+            continue
+
+        prob = probability if probability is not None else 0.5
+        brier = (prob - (1 if was_correct else 0)) ** 2
+        conn.execute(
+            "INSERT INTO rule_performance "
+            "(rule_trigger, evaluated_at, prediction_id, was_correct, "
+            "signal_confidence, notes) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (verdict_trigger, now, pred_id, was_correct,
+             prob, f"brier={brier:.4f}")
+        )
+        inserted += 1
+
+    conn.commit()
+    if inserted > 0:
+        log.info(f"Backfilled {inserted} critic_verdict performance row(s)")
+    else:
+        log.info("No critic_verdict backfill needed (already complete)")
+    return inserted
 
 
 # ─── Paper Trades ─────────────────────────────────────────────────────────────
@@ -474,11 +547,66 @@ def snapshot_portfolio(conn: sqlite3.Connection) -> None:
              f"pnl=${summary['paper_trading']['total_pnl']:+.2f}")
 
 
+def critic_verdict_stats(conn: sqlite3.Connection) -> dict:
+    """Return per-verdict {n, hit_rate, brier_mean} from rule_performance rows.
+
+    Queries rule_performance rows where rule_trigger starts with
+    'critic_verdict:'. Groups by the verdict suffix (approve/challenge/reject).
+    Returns dict keyed by verdict with counts, hit rates, and mean Brier scores.
+    """
+    rows = conn.execute(
+        "SELECT rule_trigger, was_correct, signal_confidence, notes "
+        "FROM rule_performance "
+        "WHERE rule_trigger LIKE 'critic_verdict:%'"
+    ).fetchall()
+
+    verdicts = {}
+    for trigger, was_correct, confidence, notes in rows:
+        verdict = trigger.split(":", 1)[1] if ":" in trigger else trigger
+        # Extract Brier score from notes
+        brier = 0.0
+        if notes:
+            for part in notes.split(";"):
+                part = part.strip()
+                if part.startswith("brier="):
+                    try:
+                        brier = float(part.split("=", 1)[1])
+                    except ValueError:
+                        pass
+        if verdict not in verdicts:
+            verdicts[verdict] = []
+        verdicts[verdict].append({
+            "was_correct": was_correct,
+            "brier": brier,
+        })
+
+    result = {}
+    for verdict, entries in sorted(verdicts.items()):
+        n = len(entries)
+        correct = sum(e["was_correct"] for e in entries)
+        hit_rate = correct / n if n > 0 else 0
+        brier_mean = sum(e["brier"] for e in entries) / n if n > 0 else 0
+        result[verdict] = {
+            "n": n,
+            "hit_rate": round(hit_rate, 4),
+            "brier_mean": round(brier_mean, 4),
+        }
+
+    return result
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     conn = init_db()
     print("Paper trading DB initialized")
     print(f"DB path: {DB_PATH}")
+
+    # Optional: run critic_verdict backfill
+    if len(sys.argv) > 1 and sys.argv[1] == "--backfill-critic-verdict":
+        n = backfill_critic_verdict_performance(conn)
+        print(f"Backfilled {n} critic_verdict performance row(s)")
+        conn.close()
+        sys.exit(0)
 
     # Show current state
     summary = get_performance_summary(conn)
