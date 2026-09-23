@@ -336,6 +336,7 @@ def gate_all(
     ticker: str,
     proposed_value: float,
     action: str = "BUY",
+    **kwargs,
 ) -> tuple[bool, str]:
     """
     Run every hard gate in sequence. Returns (approved, first_failure_reason).
@@ -343,6 +344,12 @@ def gate_all(
     The bypass exists only for manual-intervention workflows. It is NOT
     exposed through any API, config key, or rule file.  Every invocation
     of gate_all is logged regardless of whether the bypass fires.
+
+    Optional kwargs for new gates:
+        confidence: float — prediction confidence (0-1), used by NetOfCostGate.
+        quote:      dict  — bid/ask quote from cost_model.get_quote(), used by
+                        LiquidityGate and NetOfCostGate. If not provided and a
+                        gate needs it, the gate fetches it or passes with note.
     """
     # Always log the gate_all call for audit traceability
     if _get_bypass():
@@ -356,16 +363,204 @@ def gate_all(
         )
         return True, "[bypass active — see security log for details]"
 
+    confidence = kwargs.get("confidence")
+    quote      = kwargs.get("quote")
+
     gates = [
         check_daily_loss_breaker,
         lambda c: check_max_single_asset(c, ticker, proposed_value),
         lambda c: check_min_cash_reserve(c, proposed_value),
         lambda c: check_duplicate_order(c, ticker, action),
+        lambda c: check_liquidity(c, ticker, quote),
+        lambda c: check_net_of_cost(c, ticker, proposed_value, confidence),
     ]
 
     for check in gates:
         approved, reason = check(conn)
         if not approved:
             return False, reason
+
+    return True, ""
+
+
+# ─── Liquidity gate (Gate 5) ─────────────────────────────────────────────────
+# Port of jennycruzy-convex gates.py:LiquidityGate, adapted for equities.
+# BLOCKS entry when relative bid/ask spread exceeds configured max OR
+# quote age exceeds configured max seconds. Config-gated (disabled by default).
+
+def _get_liquidity_config(conn: "sqlite3.Connection") -> dict:
+    """Read liquidity gate config. Falls back to defaults on error."""
+    from config_reader import get_config
+    return {
+        "enabled":    get_config(conn, "liquidity_gate_enabled", False, bool),
+        "max_spread": get_config(conn, "liquidity_max_spread_pct", 0.30, float),
+        "max_age":    get_config(conn, "liquidity_max_quote_age_s", 90, float),
+    }
+
+
+def check_liquidity(
+    conn: "sqlite3.Connection",
+    ticker: str,
+    quote: dict | None = None,
+) -> tuple[bool, str]:
+    """
+    Gate 5 — Liquidity gate (spread + quote freshness).
+
+    Rejects entry when:
+      - Relative bid-ask spread > configured max (default 0.30%)
+      - Quote age > configured max seconds (default 90s)
+
+    Defaults DISABLED. Gate passes with note if quote unavailable.
+    """
+    cfg = _get_liquidity_config(conn)
+    if not cfg["enabled"]:
+        return True, ""
+
+    if quote is None:
+        from portfolio.cost_model import get_quote as _get_quote
+        quote = _get_quote(ticker)
+
+    if quote is None:
+        log.debug(f"[HARD GATE] Liquidity: no quote for {ticker} — PASS with note")
+        return True, f"Liquidity gate: no quote for {ticker} (gate disabled without data)"
+
+    spread_pct = quote.get("spread_pct", 0.0)
+    age_s      = quote.get("age_seconds", 0.0)
+    max_spread = cfg["max_spread"]
+    max_age    = cfg["max_age"]
+
+    if spread_pct > max_spread / 100.0:
+        log.warning(
+            f"[HARD GATE] Liquidity rejected {ticker}: "
+            f"spread={spread_pct:.4%} > {max_spread:.2f}% max"
+        )
+        return False, (
+            f"Liquidity gate rejected: relative spread "
+            f"{spread_pct:.4%} exceeds {max_spread:.2f}% max"
+        )
+
+    if age_s > max_age:
+        log.warning(
+            f"[HARD GATE] Liquidity rejected {ticker}: "
+            f"quote age={age_s:.0f}s > {max_age:.0f}s max"
+        )
+        return False, (
+            f"Liquidity gate rejected: quote age "
+            f"{age_s:.0f}s exceeds {max_age:.0f}s max"
+        )
+
+    return True, ""
+
+
+# ─── Net-of-cost gate (Gate 6) ───────────────────────────────────────────────
+# Port of jennycruzy-convex gates.py:NetOfCostGate, adapted for equities.
+# Rejects when estimated one-way cost share of expected edge > configured max.
+# Expected edge proxy: confidence * 150 bps (linear band, documented gap).
+
+def _get_cost_config(conn: "sqlite3.Connection") -> dict:
+    """Read cost gate config. Falls back to defaults on error."""
+    from config_reader import get_config
+    return {
+        "enabled":      get_config(conn, "cost_gate_enabled", False, bool),
+        "max_edge_shr": get_config(conn, "cost_max_edge_share", 0.25, float),
+    }
+
+
+def _expected_edge_bps(confidence: float) -> float:
+    """
+    Linear confidence-to-expected-edge mapping (basis points).
+
+    This is a PROXY because selector.py does not expose a scenario-based
+    expected move figure. The mapping assumes 150 bps max move at confidence=1.0.
+
+    TODO: Replace with true scenario-based edge when Phase 2 adds
+    scenario generation (jennycruzy-convex edge.py port).
+
+    Returns 0.0 if confidence is None or out of range.
+    """
+    if confidence is None or confidence <= 0:
+        return 0.0
+    return min(confidence * 150.0, 200.0)
+
+
+def check_net_of_cost(
+    conn: "sqlite3.Connection",
+    ticker: str,
+    proposed_value: float,
+    confidence: float | None = None,
+) -> tuple[bool, str]:
+    """
+    Gate 6 — Net-of-cost gate.
+
+    Rejects entry when estimated one-way cost exceeds configured fraction
+    of expected edge. Cost is computed from live bid/ask spread + slippage.
+
+    If confidence is unavailable, gate PASSES with a note rather than blocking,
+    since we cannot compute the cost/edge ratio without an edge estimate.
+
+    Defaults DISABLED.
+    """
+    cfg = _get_cost_config(conn)
+    if not cfg["enabled"]:
+        return True, ""
+
+    if confidence is None or confidence <= 0:
+        log.debug(
+            f"[HARD GATE] NetOfCost: no confidence for {ticker} — PASS with note"
+        )
+        return True, (
+            f"NetOfCost gate: no confidence score for {ticker} "
+            f"(edge estimate unavailable — passing)"
+        )
+
+    # Fetch quote for cost estimation
+    quote = None
+    from portfolio.cost_model import get_quote as _get_quote, CostModel
+    quote = _get_quote(ticker)
+    if quote is None:
+        log.debug(
+            f"[HARD GATE] NetOfCost: no quote for {ticker} — PASS with note"
+        )
+        return True, (
+            f"NetOfCost gate: no quote for {ticker} "
+            f"(cost estimate unavailable — passing)"
+        )
+
+    # Estimate cost
+    model = CostModel.from_config(conn)
+    qty = proposed_value / quote["mid"] if quote["mid"] > 0 else 0
+    if qty <= 0:
+        return True, ""
+
+    cost_result = model.estimate_entry_cost(ticker, qty, quote)
+    cost_pct = cost_result["cost_pct"]
+
+    # Compute expected edge (proxy)
+    edge_bps = _expected_edge_bps(confidence)
+    edge_pct = edge_bps / 10000.0  # bps → fraction
+
+    if edge_pct <= 0:
+        log.debug(
+            f"[HARD GATE] NetOfCost: zero edge for {ticker} — PASS with note"
+        )
+        return True, (
+            f"NetOfCost gate: zero expected edge for {ticker} — passing"
+        )
+
+    # Check: cost_share_of_edge = cost_pct / edge_pct
+    cost_share = cost_pct / edge_pct
+    max_share = cfg["max_edge_shr"]
+
+    if cost_share > max_share:
+        log.warning(
+            f"[HARD GATE] NetOfCost rejected {ticker}: "
+            f"cost={cost_pct:.4%} / edge={edge_pct:.4%} = {cost_share:.2%} "
+            f"> {max_share:.0%} max"
+        )
+        return False, (
+            f"NetOfCost gate rejected: cost share of expected edge "
+            f"{cost_share:.0%} exceeds {max_share:.0%} max "
+            f"(cost={cost_pct:.4%}, edge={edge_pct:.4%})"
+        )
 
     return True, ""

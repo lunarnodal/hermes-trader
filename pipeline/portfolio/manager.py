@@ -645,9 +645,21 @@ def execute_recommendations(conn, recommendations: list[dict],
             log.info(f"SKIP {ticker} — outside entry window")
             continue
 
+        # Fetch quote for liquidity + cost gates (fetched once per rec)
+        rec_quote = None
+        try:
+            from portfolio.cost_model import get_quote as _fetch_quote
+            rec_quote = _fetch_quote(ticker)
+        except Exception as _qe:
+            log.debug(f"[MANAGER] Quote fetch failed for {ticker}: {_qe}")
+
         # HARD GATES — deterministic layer, cannot be overridden by LLM
         # Runs after critic verdict and all other soft gates
-        approved, gate_reason = gate_all(conn, ticker, value, action="BUY")
+        approved, gate_reason = gate_all(
+            conn, ticker, value, action="BUY",
+            confidence=rec.get("avg_confidence"),
+            quote=rec_quote,
+        )
         if not approved:
             log.warning(f"HARD GATE rejected {ticker}: {gate_reason}")
             continue

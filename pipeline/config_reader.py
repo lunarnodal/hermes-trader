@@ -13,7 +13,16 @@ Seeding (run once against production portfolio.db):
         ('sector_win_rates', '{"ai_infrastructure":0.44,...}'),
         ('hard_block_thresholds', '[0.35, 0.70, 0.55]'),
         ('event_type_config', '{"ai_infrastructure":{...},...}'),
-        ('drawdown_circuit_breaker_pct', '0.05');
+        ('drawdown_circuit_breaker_pct', '0.05'),
+        -- Tier B1: Liquidity + Cost gates (disabled by default)
+        ('liquidity_gate_enabled', 'false'),
+        ('liquidity_max_spread_pct', '0.30'),
+        ('liquidity_max_quote_age_s', '90'),
+        ('cost_gate_enabled', 'false'),
+        ('cost_max_edge_share', '0.25'),
+        ('cost_half_spread_factor', '1.0'),
+        ('cost_slippage_bps', '5'),
+        ('cost_commission_per_share', '0.0');
 """
 
 import json
