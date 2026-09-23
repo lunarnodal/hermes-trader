@@ -89,6 +89,17 @@ def init_db() -> sqlite3.Connection:
             open_positions   INTEGER DEFAULT 0,
             notes            TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS calibration_prereg (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at      TEXT NOT NULL,
+            param_path      TEXT NOT NULL,
+            proposed_value  TEXT NOT NULL,
+            criteria_json   TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            decided_at      TEXT,
+            decision_note   TEXT
+        );
     """)
     conn.commit()
     return conn

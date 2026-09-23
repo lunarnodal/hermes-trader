@@ -208,6 +208,22 @@ def compute_stft() -> dict:
     return stft
 
 
+def _has_pending_prereg(conn: sqlite3.Connection, param_path: str) -> bool:
+    """
+    Check if there is a pending pre-registration for the given param_path.
+    Returns True if any pending row matches.
+    """
+    try:
+        row = conn.execute("""
+            SELECT COUNT(*) FROM calibration_prereg
+            WHERE param_path = ? AND status = 'pending'
+        """, (param_path,)).fetchone()
+        return row and row[0] > 0
+    except Exception:
+        # Table doesn't exist yet — safe fallback to False (no prereg enforcement)
+        return False
+
+
 def apply_trim(stft: dict) -> None:
     """
     Apply STFT corrections:
@@ -234,6 +250,14 @@ def apply_trim(stft: dict) -> None:
             continue
 
         old_ltft, old_stft, lr = row
+
+        # Pre-registration guard: defer absorption if pending prereg exists
+        if _has_pending_prereg(conn, "trim.learning_rate"):
+            log.info(
+                f"TRIM {sector}: prereg pending — absorption deferred "
+                f"(would have: LTFT {old_ltft:+.3f} + STFT={stft_val:+.3f} × lr={lr})"
+            )
+            continue
 
         # Absorb STFT into LTFT
         new_ltft = old_ltft + (stft_val * lr)
