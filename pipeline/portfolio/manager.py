@@ -217,8 +217,8 @@ def is_sector_breaker(sector: str, conn) -> bool:
     return False
 
 
-def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") -> None:
-    """Mirror trade to Alpaca paper account — non-fatal if it fails"""
+def _alpaca_mirror(action, ticker, shares, reason="", conn=None):
+    """Mirror trade to Alpaca paper account with intent journaling."""
     if _execution_breaker.is_tripped:
         log.warning(
             "Alpaca mirror SKIPPED: execution breaker is tripped "
@@ -229,39 +229,111 @@ def _alpaca_mirror(action: str, ticker: str, shares: float, reason: str = "") ->
     try:
         from alpaca_feed.trading import place_market_order
         client_id = generate_client_order_id("llm", ticker, action.lower(), shares)
+        # ── Intent journal: record BEFORE action ──
+        intent_id = None
+        if conn is not None:
+            try:
+                from portfolio.db import record_intent
+                intent_id = record_intent(conn, account="org", action=action.lower(),
+                                          symbol=ticker, qty=shares,
+                                          client_order_id=client_id)
+            except Exception as _ie:
+                log.error("[INTENT] Failed to journal intent for %s %s — "
+                          "ORDER BLOCKED (fail-closed): %s", action, ticker, _ie)
+                return
         if action == "BUY":
-            place_market_order(ticker, shares, "buy", reason, client_order_id=client_id)
+            result = place_market_order(ticker, shares, "buy", reason,
+                                        client_order_id=client_id)
         elif action in ("SELL", "PARTIAL_SELL"):
-            place_market_order(ticker, shares, "sell", reason, client_order_id=client_id)
+            result = place_market_order(ticker, shares, "sell", reason,
+                                        client_order_id=client_id)
+        else:
+            result = {"success": False, "error": f"Unknown action: {action}"}
+        # ── Update intent state after broker call ──
+        if conn is not None and intent_id is not None:
+            try:
+                from portfolio.db import update_intent_state
+                if result.get("success"):
+                    update_intent_state(conn, intent_id, state="submitted",
+                                        broker_order_id=result.get("order_id"))
+                else:
+                    update_intent_state(conn, intent_id, state="failed")
+            except Exception as _ue:
+                log.warning("[INTENT] Failed to update intent state for %s: %s",
+                            client_id, _ue)
         _execution_breaker.record_success()
     except Exception as _e:
+        if conn is not None and intent_id is not None:
+            try:
+                from portfolio.db import update_intent_state
+                update_intent_state(conn, intent_id, state="failed")
+            except Exception:
+                pass
         _execution_breaker.record_failure()
         log.warning(f"Alpaca mirror failed (non-fatal): {_e}")
-    # Also mirror to hackathon account
-    _alpaca_mirror_hackathon(action, ticker, shares, reason)
+    _alpaca_mirror_hackathon(action, ticker, shares, reason, conn=conn)
 
 
-def _alpaca_mirror_hackathon(action: str, ticker: str, shares: float, reason: str = "") -> None:
-    """Mirror trade to hackathon Alpaca account — validates position before selling"""
+def _alpaca_mirror_hackathon(action, ticker, shares, reason="", conn=None):
+    """Mirror trade to hackathon Alpaca account with intent journaling."""
     if _execution_breaker.is_tripped:
         return  # already skipped in _alpaca_mirror
     try:
         from alpaca_feed.trading_hackathon import place_market_order, get_position
         client_id = generate_client_order_id("llm", ticker, action.lower(), shares)
+        # ── Intent journal: record BEFORE action ──
+        intent_id = None
+        if conn is not None:
+            try:
+                from portfolio.db import record_intent
+                intent_id = record_intent(conn, account="hk", action=action.lower(),
+                                          symbol=ticker, qty=shares,
+                                          client_order_id=client_id)
+            except Exception as _ie:
+                log.error("[INTENT] Failed to journal hk intent for %s %s — "
+                          "ORDER BLOCKED: %s", action, ticker, _ie)
+                return
         if action == "BUY":
-            place_market_order(ticker, shares, "buy", reason, client_order_id=client_id)
+            result = place_market_order(ticker, shares, "buy", reason,
+                                        client_order_id=client_id)
         elif action in ("SELL", "PARTIAL_SELL"):
-            # Only sell if position exists in hackathon account
             pos = get_position(ticker)
             if not pos:
                 log.info(f"Hackathon mirror: skipping {action} {ticker} — no position in hackathon account")
+                if intent_id is not None and conn is not None:
+                    try:
+                        from portfolio.db import update_intent_state
+                        update_intent_state(conn, intent_id, state="failed")
+                    except Exception:
+                        pass
                 return
-            available = pos.get('qty', 0)
+            available = pos.get("qty", 0)
             sell_shares = min(shares, available)
             if sell_shares <= 0:
                 return
-            place_market_order(ticker, sell_shares, "sell", reason, client_order_id=client_id)
+            result = place_market_order(ticker, sell_shares, "sell", reason,
+                                        client_order_id=client_id)
+        else:
+            result = {"success": False, "error": f"Unknown action: {action}"}
+        # ── Update intent state after broker call ──
+        if conn is not None and intent_id is not None:
+            try:
+                from portfolio.db import update_intent_state
+                if result.get("success"):
+                    update_intent_state(conn, intent_id, state="submitted",
+                                        broker_order_id=result.get("order_id"))
+                else:
+                    update_intent_state(conn, intent_id, state="failed")
+            except Exception as _ue:
+                log.warning("[INTENT] Failed to update hk intent for %s: %s",
+                            client_id, _ue)
     except Exception as _e:
+        if intent_id is not None and conn is not None:
+            try:
+                from portfolio.db import update_intent_state
+                update_intent_state(conn, intent_id, state="failed")
+            except Exception:
+                pass
         log.warning(f"Hackathon mirror failed (non-fatal): {_e}")
 
 
@@ -438,7 +510,7 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
                         (next_tier_idx, next_take_profit, pos["id"])
                     )
                     _alpaca_mirror("PARTIAL_SELL", ticker,
-                                   round(pos["shares"] * fraction, 0), reason)
+                                   round(pos["shares"] * fraction, 0), reason, conn=conn)
                     actions.append({
                         "action": "PARTIAL_SELL",
                         "reason": reason,
@@ -453,7 +525,7 @@ def check_stop_loss_take_profit(conn, dry_run: bool = False) -> list[dict]:
                      f"(entry=${pos['entry_price']:.2f}, {pnl_pct:.1f}%)")
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
-                _alpaca_mirror("SELL", ticker, pos["shares"], reason)
+                _alpaca_mirror("SELL", ticker, pos["shares"], reason, conn=conn)
                 actions.append({"action": "SELL", "reason": "stop_loss", **result})
 
     conn.commit()
@@ -508,8 +580,8 @@ def check_time_exits(conn, dry_run: bool = False) -> list[dict]:
                      f"adaptive_hold={adaptive_hold} days")
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
-                _alpaca_mirror("SELL", ticker, pos["shares"], reason)
-                _alpaca_mirror_hackathon("SELL", ticker, pos["shares"], reason)
+                _alpaca_mirror("SELL", ticker, pos["shares"], reason, conn=conn)
+                _alpaca_mirror_hackathon("SELL", ticker, pos["shares"], reason, conn=conn)
                 actions.append({"action": "SELL", "reason": "time_exit", **result})
 
     conn.commit()
@@ -684,7 +756,7 @@ def execute_recommendations(conn, recommendations: list[dict],
             if pos_id > 0 or (AUDIT_MODE and pos_id == -1):
                 if not AUDIT_MODE:
                     _alpaca_mirror("BUY", ticker, shares,
-                                   f"sector={sector} conf={rec.get('avg_confidence',0):.0%}")
+                                   f"sector={sector} conf={rec.get('avg_confidence',0):.0%}", conn=conn)
                 executed.append({
                     "action":  "BUY",
                     "ticker":  ticker,
@@ -745,6 +817,52 @@ def save_recommendations(conn, recommendations: list[dict]) -> None:
     conn.commit()
 
 
+def reconcile_intents(conn, grace_seconds=120):
+    """Reconcile stale intents from prior cycle. Phase 1: no auto-cancel."""
+    from portfolio.db import get_stale_intents, update_intent_state
+    stale = get_stale_intents(conn, grace_seconds=grace_seconds)
+    if not stale:
+        return 0
+    log.info(f"[RECONCILE] Checking {len(stale)} stale intent(s)")
+    reconciled = 0
+    today = datetime.now(timezone.utc).date().isoformat()
+    for intent in stale:
+        cid = intent["client_order_id"]
+        iid = intent["id"]
+        acct = intent["account"]
+        broker_order = None
+        try:
+            if acct == "org":
+                from alpaca_feed.trading import get_order_by_client_order_id
+                broker_order = get_order_by_client_order_id(cid)
+            elif acct == "hk":
+                from alpaca_feed.trading_hackathon import get_order_by_client_order_id
+                broker_order = get_order_by_client_order_id(cid)
+        except Exception as _e:
+            log.warning(f"[RECONCILE] Broker lookup failed for {cid}: {_e}")
+            continue
+        if broker_order:
+            update_intent_state(conn, iid, state="confirmed",
+                                broker_order_id=broker_order.get("order_id"))
+            log.info(f"[RECONCILE] {cid} -> confirmed "
+                     f"(broker order {broker_order.get('order_id')})")
+            reconciled += 1
+        else:
+            intent_date = intent.get("created_at", "")[:10]
+            if intent_date == today:
+                update_intent_state(conn, iid, state="failed")
+                log.warning(f"[RECONCILE] {cid} -> failed "
+                            f"(not found on broker, same-day)")
+            else:
+                update_intent_state(conn, iid, state="orphan")
+                log.warning(f"[RECONCILE] {cid} -> ORPHAN "
+                            f"(not found on broker, cross-day from {intent_date})")
+            reconciled += 1
+    if reconciled:
+        log.info(f"[RECONCILE] Reconciled {reconciled} intent(s)")
+    return reconciled
+
+
 _HEARTBEAT_PATH = Path("/tmp/portfolio_cycle_heartbeat.json")
 
 
@@ -779,6 +897,14 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
              f"({'DRY RUN' if dry_run else 'LIVE'}) ═══")
 
     conn     = init_db()
+
+    # ── Intent reconciliation: resolve stale intents from prior cycle ──
+    if not dry_run and not AUDIT_MODE:
+        try:
+            reconcile_intents(conn, grace_seconds=120)
+        except Exception as _re:
+            log.warning(f"[RECONCILE] Startup reconciliation failed (non-fatal): {_re}")
+
     results  = {"exits": [], "entries": [], "recommendations": []}
 
     # Sync Alpaca state into DB — Alpaca is source of truth for cash and positions

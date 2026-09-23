@@ -225,6 +225,24 @@ def sync_order_status(order_id: str) -> dict:
         return {'order_id': order_id, 'error': str(e)}
 
 
+def get_order_by_client_order_id(client_order_id: str) -> dict | None:
+    """Lookup order by client_order_id for intent reconciliation."""
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+        client = get_trading_client()
+        orders = client.get_orders(GetOrdersRequest(
+            status=QueryOrderStatus.ALL, client_order_id=client_order_id))
+        if orders:
+            o = orders[0]
+            return {"order_id": str(o.id), "status": str(o.status),
+                    "client_order_id": str(o.client_order_id)}
+        return None
+    except Exception as e:
+        log.warning(f"Order lookup failed for cid={client_order_id}: {e}")
+        return None
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")

@@ -223,6 +223,20 @@ def init_db() -> sqlite3.Connection:
             iv_crush_dte_threshold    INTEGER DEFAULT 7,
             updated_at                TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS order_intents (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at      TEXT NOT NULL,
+            account         TEXT NOT NULL,
+            action          TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            qty             REAL NOT NULL,
+            limit_price     REAL,
+            client_order_id TEXT NOT NULL,
+            state           TEXT NOT NULL DEFAULT 'intent',
+            broker_order_id TEXT,
+            updated_at      TEXT NOT NULL
+        );
     """)
 
     # Seed starting capital if not already done
@@ -1212,6 +1226,60 @@ def _update_sector_assignment_rate(conn: sqlite3.Connection, sector: str) -> Non
         SET assignment_rate = ?, updated_at = ?
         WHERE sector = ?
     """, (rate, now, sector))
+
+
+# ─── Order intent journaling (packetloss404 journal.py:340-365) ──────────────
+
+def record_intent(conn, account, action, symbol, qty, client_order_id,
+                   limit_price=None):
+    """Record intent BEFORE broker call. Fail-closed if insert fails."""
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute("""
+        INSERT INTO order_intents
+            (created_at, account, action, symbol, qty, limit_price,
+             client_order_id, state, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'intent', ?)
+    """, (now, account, action, symbol, qty, limit_price,
+            client_order_id, now))
+    conn.commit()
+    log.info("[INTENT] Recorded: %s %s qty=%s cid=%s (account=%s)",
+             action.upper(), symbol, qty, client_order_id, account)
+    return cursor.lastrowid
+
+
+def update_intent_state(conn, intent_id, state, broker_order_id=None):
+    """Transition intent state and optionally record broker order id."""
+    now = datetime.now(timezone.utc).isoformat()
+    if broker_order_id is not None:
+        conn.execute("""
+            UPDATE order_intents SET state=?, broker_order_id=?, updated_at=?
+            WHERE id=?
+        """, (state, broker_order_id, now, intent_id))
+    else:
+        conn.execute("""
+            UPDATE order_intents SET state=?, updated_at=? WHERE id=?
+        """, (state, now, intent_id))
+    conn.commit()
+    log.debug("[INTENT] Updated id=%d -> %s broker_id=%s",
+              intent_id, state, broker_order_id)
+
+
+def get_stale_intents(conn, grace_seconds=120):
+    """Return intents in 'intent'/'submitted' states older than grace."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=grace_seconds)).isoformat()
+    rows = conn.execute("""
+        SELECT id, created_at, account, action, symbol, qty,
+               client_order_id, state, broker_order_id, updated_at
+        FROM order_intents
+        WHERE state IN ('intent', 'submitted') AND updated_at < ?
+        ORDER BY created_at ASC
+    """, (cutoff,)).fetchall()
+    return [
+        {"id": r[0], "created_at": r[1], "account": r[2], "action": r[3],
+         "symbol": r[4], "qty": r[5], "client_order_id": r[6],
+         "state": r[7], "broker_order_id": r[8], "updated_at": r[9]}
+        for r in rows
+    ]
 
 
 if __name__ == "__main__":
