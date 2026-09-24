@@ -153,7 +153,7 @@ def get_theta_positions() -> list[dict]:
                 continue
             try:
                 underlying = symbol[:3].strip()
-                date_str = symbol[3:8]
+                date_str = symbol[3:9]   # 6-char date: YYMMDD
                 cp = symbol[9]
                 strike = float(symbol[10:]) / 1000.0
                 year = 2000 + int(date_str[:2])
