@@ -357,6 +357,17 @@ def execute_theta_recommendation(rec: dict, conn) -> dict | None:
         port = float(port_val[0]) if port_val else 100000
         max_theta_cash = port * 0.20
 
+        # Check TOTAL theta exposure — cap at 35% of portfolio across all open positions
+        existing_theta_cash = conn.execute(
+            "SELECT COALESCE(SUM(strike * 100), 0) FROM theta_positions WHERE status = 'open'"
+        ).fetchone()[0]
+        max_total_theta = port * 0.35
+        if existing_theta_cash + cash_required > max_total_theta:
+            log.info(f"[THETA] SKIP {ticker} CSP — total theta exposure "
+                     f"${existing_theta_cash + cash_required:.0f} would exceed "
+                     f"35% limit (${max_total_theta:.0f})")
+            return None
+
         if cash_required > min(available * 0.25, max_theta_cash):
             log.info(f"[THETA] SKIP {ticker} CSP — cash required ${cash_required:.0f} "
                      f"exceeds limit")
