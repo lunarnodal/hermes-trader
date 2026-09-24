@@ -116,7 +116,7 @@ def _get_market_regime(etf: str, stock_client) -> str:
 def _compute_iv_rank(current_iv: float, historical_ivs: list[float]) -> float:
     """IV Rank = (current - 52w_low) / (52w_high - 52w_low) * 100"""
     if not historical_ivs or len(historical_ivs) < 10:
-        log.warning("finnhub fallback: iv_rank fabricated as 50 (insufficient history: %d samples), token or API missing?", len(historical_ivs) if historical_ivs else 0)
+        log.warning("[THETA] iv_rank defaulted to 50 (no IV history yet, %d snapshots accumulated -- need 10+)", len(historical_ivs) if historical_ivs else 0)
         return 50.0
     iv_low  = min(historical_ivs)
     iv_high = max(historical_ivs)
@@ -126,14 +126,14 @@ def _compute_iv_rank(current_iv: float, historical_ivs: list[float]) -> float:
     return round(max(0.0, min(100.0, rank)), 1)
 
 
-def _get_historical_ivs(etf: str, current_iv: float,
+def _get_historical_ivs(sector: str, current_iv: float,
                          conn: sqlite3.Connection = None) -> list[float]:
     """Get stored IV history or bootstrap from current IV."""
     if conn:
         try:
             row = conn.execute(
                 "SELECT iv_history FROM theta_risk_params WHERE sector = ?",
-                (etf,)
+                (sector,)
             ).fetchone()
             if row and row[0]:
                 import json
@@ -143,7 +143,7 @@ def _get_historical_ivs(etf: str, current_iv: float,
 
     # Bootstrap until we have real history
     import random
-    random.seed(etf)
+    random.seed(sector)
     base_iv = current_iv * 100
     return [max(5.0, base_iv + random.gauss(0, base_iv * 0.20)) for _ in range(52)]
 
@@ -173,7 +173,7 @@ def get_sector_market_data(sector: str, conn: sqlite3.Connection = None) -> dict
         "underlying_price":       100.0,
         "etf":                    etf,
     }
-    log.warning("finnhub fallback: theta defaults fabricated for " + sector + " (iv_rank=50, premium_yield=0.02, regime=sideways), token or API missing?")
+    log.warning(f"[THETA] Using default theta values for {sector} (Alpaca fetch not yet completed)")
 
     try:
         stock_client, options_client = _get_alpaca_clients()
@@ -229,8 +229,15 @@ def get_sector_market_data(sector: str, conn: sqlite3.Connection = None) -> dict
                     )
 
                 # IV rank
-                historical_ivs = _get_historical_ivs(etf, atm_iv, conn)
+                historical_ivs = _get_historical_ivs(sector, atm_iv, conn)
                 result["iv_rank"] = _compute_iv_rank(atm_iv * 100, historical_ivs)
+
+                # B1: Store IV VALUE snapshot after successful chain fetch
+                if conn:
+                    try:
+                        store_iv_snapshot(sector, atm_iv * 100, conn)
+                    except Exception as e:
+                        log.warning(f"[THETA] IV snapshot store failed for {sector}: {e}")
 
                 log.info(f"[THETA] {sector} ({etf}): price=${underlying_price:.2f} "
                          f"IV={atm_iv:.1%} IV_rank={result['iv_rank']:.0f} "
@@ -272,7 +279,7 @@ def get_all_sector_market_data(conn: sqlite3.Connection = None) -> dict[str, dic
             results[sector] = get_sector_market_data(sector, conn)
         except Exception as e:
             log.warning(f"[THETA] Failed market data for {sector}: {e}")
-            log.warning("finnhub fallback: theta defaults fabricated for " + sector + " (iv_rank=50, premium_yield=0.02), token or API missing?")
+            log.warning(f"[THETA] Using default theta values for {sector} (Alpaca fetch failed)")
             results[sector] = {
                 "iv_rank": 50.0, "premium_yield": 0.02,
                 "market_regime": "sideways", "open_interest": 500,
@@ -282,8 +289,8 @@ def get_all_sector_market_data(conn: sqlite3.Connection = None) -> dict[str, dic
     return results
 
 
-def store_iv_snapshot(sector: str, iv_rank: float, conn: sqlite3.Connection) -> None:
-    """Store daily IV snapshot for building historical IV rank over time."""
+def store_iv_snapshot(sector: str, iv_value: float, conn: sqlite3.Connection) -> None:
+    """Store daily IV VALUE snapshot for building historical IV rank over time."""
     try:
         import json
         now = datetime.now(timezone.utc).isoformat()
@@ -292,7 +299,7 @@ def store_iv_snapshot(sector: str, iv_rank: float, conn: sqlite3.Connection) -> 
             (sector,)
         ).fetchone()
         history = json.loads(row[0]) if row and row[0] else []
-        history.append(round(iv_rank, 1))
+        history.append(round(iv_value, 2))
         history = history[-365:]
         conn.execute("""
             INSERT INTO theta_risk_params (sector, iv_history, updated_at)

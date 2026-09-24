@@ -221,6 +221,7 @@ def init_db() -> sqlite3.Connection:
             assignment_risk_limit_pct REAL DEFAULT 0.15,
             early_close_gap_threshold REAL DEFAULT 0.05,
             iv_crush_dte_threshold    INTEGER DEFAULT 7,
+            iv_history                TEXT,
             updated_at                TEXT NOT NULL
         );
 
@@ -252,6 +253,13 @@ def init_db() -> sqlite3.Connection:
         """, (now, CONFIG["starting_capital"], CONFIG["starting_capital"]))
         conn.commit()
         log.info(f"Portfolio initialized with ${CONFIG['starting_capital']:,.2f}")
+
+    # B6: Migration -- add iv_history column if table exists but column is missing
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(theta_risk_params)").fetchall()]
+    if "iv_history" not in cols:
+        conn.execute("ALTER TABLE theta_risk_params ADD COLUMN iv_history TEXT")
+        conn.commit()
+        log.info("Migrated: added iv_history column to theta_risk_params")
 
     return conn
 
