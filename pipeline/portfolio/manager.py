@@ -1037,11 +1037,17 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
             action = rec["action"]
             ticker = rec["ticker"]
             if action == "BUY":
-                log.info(f"  {action:6s} {ticker:6s} "
-                         f"{rec.get('suggested_shares', 0)} shares @ "
-                         f"${rec.get('current_price', 0):.2f} = "
-                         f"${rec.get('suggested_value', 0):.2f} "
-                         f"({rec.get('type', 'stock')})")
+                if rec.get("instrument") in ("THETA_CSP", "THETA_CC"):
+                    log.info(f"  {action:6s} {ticker:6s} "
+                             f"{rec['instrument']} score={rec.get('theta_score', 0):.2f} @ "
+                             f"${rec.get('current_price', 0):.2f} "
+                             f"(theta)")
+                else:
+                    log.info(f"  {action:6s} {ticker:6s} "
+                             f"{rec.get('suggested_shares', 0)} shares @ "
+                             f"${rec.get('current_price', 0):.2f} = "
+                             f"${rec.get('suggested_value', 0):.2f} "
+                             f"({rec.get('type', 'stock')})")
             elif action in ("SELL", "REVIEW"):
                 log.info(f"  {action:6s} {ticker:6s} — {rec.get('rationale', '')}")
             else:
