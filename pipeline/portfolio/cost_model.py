@@ -11,6 +11,7 @@ conservative values for equities.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -70,7 +71,12 @@ def get_quote(ticker: str) -> dict[str, Any] | None:
 
         now = time.time()
         ts = q.timestamp if hasattr(q, "timestamp") and q.timestamp else now
-        if isinstance(ts, int) and ts > 1e12:
+        if isinstance(ts, datetime.datetime):
+            # alpaca-py >= 0.44 returns a tz-aware datetime (UTC), not epoch
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=datetime.timezone.utc)
+            ts = ts.timestamp()
+        elif isinstance(ts, int) and ts > 1e12:
             ts = ts / 1000.0  # ms → seconds
 
         bid = float(q.bid_price)
