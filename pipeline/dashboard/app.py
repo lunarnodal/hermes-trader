@@ -124,6 +124,11 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   .sector-name{font-size:12px;width:100px;color:#e6edf3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sector-count{font-size:11px;color:#8b949e;width:30px;text-align:right}
   .pos-pnl-bar{height:3px;border-radius:2px;margin-top:3px}
+  .tf-group{display:inline-flex;gap:2px;background:#0d1117;border:1px solid #21262d;border-radius:5px;padding:2px}
+  .tf-btn{background:transparent;color:#8b949e;border:none;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:500}
+  .tf-btn:hover{color:#e6edf3}
+  .tf-btn.active{background:#1f2937;color:#e6edf3}
+  .card-header-left{display:flex;align-items:center;gap:10px}
 </style>
 </head>
 <body>
@@ -184,7 +189,16 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
   <div class="grid grid-2" id="row0">
     <div class="card" draggable="true" id="card-pnl">
       <div class="card-header">
-        <span class="card-title">Portfolio value</span>
+        <span class="card-header-left">
+          <span class="card-title">Portfolio value</span>
+          <span class="tf-group">
+            <button class="tf-btn" data-range="7" onclick="setPnlRange(7,this)">1W</button>
+            <button class="tf-btn" data-range="30" onclick="setPnlRange(30,this)">1M</button>
+            <button class="tf-btn" data-range="90" onclick="setPnlRange(90,this)">3M</button>
+            <button class="tf-btn" data-range="180" onclick="setPnlRange(180,this)">6M</button>
+            <button class="tf-btn" data-range="all" onclick="setPnlRange('all',this)">All</button>
+          </span>
+        </span>
         <span class="drag-handle" title="Drag to reorder">⠿</span>
       </div>
       <div class="legend">
@@ -365,6 +379,84 @@ function dirBadge(d) {
 let pnlChartInst, winChartInst, sectorChartInst, sentChartInst;
 const SECTOR_COLORS = ['#58a6ff','#3fb950','#d29922','#f85149','#bc8cff','#79c0ff','#56d364','#ffa657'];
 
+function _pnlAccountId() {
+  return document.getElementById('accountSelect')?.value || '';
+}
+
+function _pnlStorageKey() {
+  return 'pnl_range_' + _pnlAccountId();
+}
+
+function _pnlGetRange() {
+  try { return localStorage.getItem(_pnlStorageKey()); } catch(e) { return 'all'; }
+}
+
+function _pnlSetRange(range) {
+  try { localStorage.setItem(_pnlStorageKey(), range); } catch(e) {}
+}
+
+function setPnlRange(range, btn) {
+  _pnlSetRange(range);
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  _renderPnlChart(range);
+}
+
+function _restorePnlRange() {
+  const saved = _pnlGetRange();
+  const label = saved === 'all' ? 'all' : String(saved);
+  const btn = document.querySelector(`.tf-btn[data-range="${label}"]`);
+  if (btn) btn.classList.add('active');
+  return saved;
+}
+
+function _renderPnlChart(range) {
+  const snaps = window._allSnaps || [];
+  const now = Date.now();
+  let filtered = snaps;
+  if (range !== 'all') {
+    const days = parseInt(range, 10);
+    const cutoff = now - days * 86400000;
+    filtered = snaps.filter(s => new Date(s.date).getTime() >= cutoff);
+  }
+  if (filtered.length < 2) filtered = snaps;
+  const labels = filtered.map(s => s.date);
+  const vals   = filtered.map(s => s.total_value);
+  if (pnlChartInst) pnlChartInst.destroy();
+  pnlChartInst = new Chart(document.getElementById('pnlChart'), {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Portfolio',
+          data: vals,
+          borderColor: '#58a6ff',
+          backgroundColor: 'rgba(88,166,255,0.08)',
+          fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2
+        },
+        {
+          label: 'Baseline',
+          data: labels.map(() => 50000),
+          borderColor: '#30363d',
+          borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 8 },
+             grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e', font: { size: 10 },
+                      callback: v => fmtK(v) },
+             grid: { color: '#21262d' } }
+      }
+    }
+  });
+}
+
 async function switchAccount(accountId) {
   await fetch("/api/switch-account", {
     method: "POST",
@@ -463,42 +555,9 @@ async function loadData() {
   }
 
   // P&L chart
-  const snaps = data.snapshots || [];
-  const pnlLabels = snaps.map(s => s.date);
-  const pnlVals   = snaps.map(s => s.total_value);
-  if (pnlChartInst) pnlChartInst.destroy();
-  pnlChartInst = new Chart(document.getElementById('pnlChart'), {
-    type: 'line',
-    data: {
-      labels: pnlLabels,
-      datasets: [
-        {
-          label: 'Portfolio',
-          data: pnlVals,
-          borderColor: '#58a6ff',
-          backgroundColor: 'rgba(88,166,255,0.08)',
-          fill: true, tension: 0.3, pointRadius: 1, borderWidth: 2
-        },
-        {
-          label: 'Baseline',
-          data: pnlLabels.map(() => 50000),
-          borderColor: '#30363d',
-          borderDash: [4,4], borderWidth: 1, pointRadius: 0, fill: false
-        }
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#8b949e', font: { size: 10 }, maxTicksLimit: 8 },
-             grid: { color: '#21262d' } },
-        y: { ticks: { color: '#8b949e', font: { size: 10 },
-                      callback: v => fmtK(v) },
-             grid: { color: '#21262d' } }
-      }
-    }
-  });
+  window._allSnaps = data.snapshots || [];
+  const initialRange = _restorePnlRange();
+  _renderPnlChart(initialRange);
 
   // Win rate chart — weekly buckets from predictions
   const preds = data.predictions || [];
