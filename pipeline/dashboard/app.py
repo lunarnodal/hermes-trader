@@ -568,9 +568,7 @@ async function loadData() {
       const pnlCls     = pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'gray';
       const ahPnlCls   = ahPnl != null ? (ahPnl > 0 ? 'green' : ahPnl < 0 ? 'red' : 'gray') : '';
       const tiers = p.tiers_triggered || 0;
-      const tierBadge = tiers > 0
-        ? `<span style="background:#1a2a3a;color:#58a6ff;padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`
-        : '—';
+      const tierBadge = `<span style="background:${tiers>0?'#1a2a3a':'#0d1117'};color:${tiers>0?'#58a6ff':'#4a5568'};padding:1px 5px;border-radius:3px;font-size:10px">T${tiers}</span>`;
       return `<tr>
         <td style="font-weight:600">${p.ticker}${liveTag}</td>
         <td class="gray">${p.sector||'—'}</td>
