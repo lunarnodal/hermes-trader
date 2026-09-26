@@ -234,7 +234,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
       <table>
         <thead>
           <tr>
-            <th>Ticker</th><th>Sector</th><th>Shares</th>
+            <th>Ticker</th><th>Sector</th><th>Shares</th><th style="text-align:right">Cost Basis</th>
             <th style="text-align:right">Entry</th>
             <th style="text-align:right">Price</th>
             <th style="text-align:right">P&L</th>
@@ -244,7 +244,7 @@ DASHBOARD_HTML = '''<!DOCTYPE html>
           </tr>
         </thead>
         <tbody id="positionsBody">
-          <tr><td colspan="8" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
+          <tr><td colspan="10" class="gray" style="text-align:center;padding:12px">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -615,7 +615,7 @@ async function loadData() {
   const positions = data.positions || [];
   const posBody = document.getElementById('positionsBody');
   if (!positions.length) {
-    posBody.innerHTML = '<tr><td colspan="8" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
+    posBody.innerHTML = '<tr><td colspan="10" class="gray" style="text-align:center;padding:12px">No open positions</td></tr>';
   } else {
     posBody.innerHTML = positions.map(p => {
       const useLive    = p.live_price != null;
@@ -632,6 +632,7 @@ async function loadData() {
         <td style="font-weight:600">${p.ticker}${liveTag}</td>
         <td class="gray">${p.sector||'—'}</td>
         <td>${p.shares}</td>
+        <td style="text-align:right">${p.cost_basis != null ? fmt$(p.cost_basis) : '—'}</td>
         <td style="text-align:right">${fmt$(p.entry_price)}</td>
         <td style="text-align:right">${mktOpen
           ? '<span style="color:#10B981;font-size:9px">●</span> ' + fmt$(p.live_price)
