@@ -77,6 +77,14 @@ Required fields:
 - confidence: float between 0.0 and 1.0
 - tickers: array of up to 5 most relevant stock tickers mentioned (e.g. ["AAPL", "NVDA"]) or [] — limit to primary tickers only, not every company mentioned
 - sectors: array of up to 3 PRIMARY affected sectors only (no indirect, no exhaustive lists)
+  CRITICAL EXCLUSION for geopolitical sectors: The state-level armed conflict
+  inference rule applies ONLY to interstate war, nation-state military operations,
+  and formal international sanctions. Domestic violence incidents, school shootings,
+  gang violence, terrorist attacks without state military involvement, civil unrest,
+  and non-state armed group activity (e.g. Houthi, rebel militias, insurgents) do
+  NOT trigger the geopolitical sector mapping. Tag such articles as
+  event_type="non_market_noise" or event_type="geopolitical" with sectors=[] if
+  there is no direct, documented economic transmission to specific market sectors.
 - event_type: exactly one of "earnings", "macro", "geopolitical", "regulatory", "merger_acquisition", "merger_arbitrage", "ipo", "product", "leadership_transition", "corporate_governance", "ai_infrastructure", "sec_filing", "commodity_shortage", "supply_disruption", "market_trend", "sp500_component", "analyst_rating", "technical_signal", "editorial_opinion", "non_market_noise", "other"
   editorial_opinion: opinion columns, analyst commentary pieces, editorials not tied to a specific market event — use when the article is primarily an opinion piece with no concrete event trigger
   non_market_noise: lifestyle articles, promotional content, show recaps, podcast episode summaries, flash sale announcements, "case for/against" lists with no market trigger — tag these NOT as "other"

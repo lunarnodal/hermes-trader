@@ -54,8 +54,8 @@ def seed_static_rules(conn: sqlite3.Connection) -> None:
     """Seed the baseline static rules — upserts per trigger so new rules land."""
     now = datetime.now(timezone.utc).isoformat()
     static_rules = [
-        # Geopolitical
-        ("war conflict military strikes sanctions",
+        # Geopolitical — state-level only (non-state groups excluded, see score.py prompt)
+        ("state-level armed conflict war military operations sanctions",
          ["energy","defense","commodities","oil_gas"]),
         ("russia ukraine",
          ["energy","oil_gas","commodities","chemicals","semiconductors","neon_gas"]),
