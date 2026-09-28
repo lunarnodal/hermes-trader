@@ -195,6 +195,179 @@ def verify_expired_predictions(conn: sqlite3.Connection) -> int:
     return verified_count
 
 
+# ─── Rejected-signal outcome writer ─────────────────────────────────────────
+
+def _next_trading_day(dt: datetime) -> datetime:
+    """Return the next US trading day after *dt* (skip Sat/Sun)."""
+    d = dt + timedelta(days=1)
+    while d.weekday() >= 5:  # 5=Sat, 6=Sun
+        d += timedelta(days=1)
+    return d
+
+
+def fetch_close_on_date(ticker: str, date_str: str) -> float | None:
+    """Fetch the closing price for *ticker* on a specific trading date.
+
+    Args:
+        ticker: ETF or stock ticker (e.g. 'XLK').
+        date_str: Date string 'YYYY-MM-DD' in America/New_York timezone.
+
+    Returns:
+        Closing price as float, or None on failure.
+    """
+    try:
+        # Convert NY date to UTC timestamps for Yahoo API
+        ny_tz = ZoneInfo("America/New_York")
+        local_date = datetime.strptime(date_str, "%Y-%m-%d").replace(
+            tzinfo=ny_tz
+        )
+        # period1 = start of that day (UTC), period2 = end of that day (UTC)
+        period1 = int((local_date.replace(hour=0, minute=0, second=0)
+                       .astimezone(timezone.utc)).timestamp())
+        period2 = int((local_date.replace(hour=23, minute=59, second=59)
+                       .astimezone(timezone.utc)).timestamp())
+
+        url = f"{YF_BASE}/{ticker}"
+        resp = requests.get(url, params={
+            "interval": "1d",
+            "period1": period1,
+            "period2": period2,
+            "includePrePost": False,
+        }, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        resp.raise_for_status()
+
+        data = resp.json()
+        result = data["chart"]["result"][0]
+        closes = result["indicators"]["quote"][0]["close"]
+        times = result["timestamp"]
+
+        valid = [(t, c) for t, c in zip(times, closes) if c is not None]
+        if not valid:
+            return None
+
+        # Return the last close within our date window
+        return round(valid[-1][1], 2)
+
+    except Exception as e:
+        log.warning(f"Could not fetch close for {ticker} on {date_str}: {e}")
+        return None
+
+
+def verify_rejected_signals(conn: sqlite3.Connection) -> int:
+    """Compute next_day_drift + was_correct for rejected signal_ledger rows.
+
+    For each rejected signal with NULL outcomes:
+      - Fetch sector-ETF close on signal_date and next trading day.
+      - Store close-to-close pct_change as next_day_drift (decimal fraction).
+      - Set was_correct = 1 when the rejection was validated (sector moved
+        against predicted direction), 0 when it was a false negative, NULL
+        for neutral / mixed / directionless signals.
+      - Mark verified_at so the update is idempotent.
+
+    Safe for backfill since any date — uses date-anchored Yahoo Finance closes.
+    """
+    rows = conn.execute("""
+        SELECT id, sector, query, direction, created_at
+        FROM signal_ledger
+        WHERE next_day_drift IS NULL
+          AND was_correct IS NULL
+          AND verified_at IS NULL
+        ORDER BY created_at ASC
+    """).fetchall()
+
+    if not rows:
+        log.info("No unverified rejected signals to score")
+        return 0
+
+    log.info(f"Found {len(rows)} rejected signals to score outcomes for")
+
+    # Gate: only score when market is open (so we have fresh closes)
+    now_local = datetime.now()
+    is_weekday = now_local.weekday() < 5
+    market_open_today = now_local.replace(
+        hour=9, minute=30, second=0, microsecond=0
+    )
+    if not is_weekday or now_local < market_open_today:
+        log.info("Market not yet open — deferring rejected-signal scoring")
+        return 0
+
+    verified_count = 0
+    for row in rows:
+        sig_id, sector, query, direction, created_at = row
+
+        # Resolve ETF for this sector
+        etf = get_sector_etf(query)
+
+        # Parse signal date (America/New_York local date of creation)
+        try:
+            created_dt = datetime.fromisoformat(
+                created_at.replace("Z", "+00:00")
+            )
+            signal_date_ny = created_dt.astimezone(ZoneInfo("America/New_York"))
+            signal_date_str = signal_date_ny.strftime("%Y-%m-%d")
+            next_day_dt = _next_trading_day(signal_date_ny)
+            next_date_str = next_day_dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError) as e:
+            log.warning(
+                f"  Bad date for signal #{sig_id}: {created_at!r} — {e}"
+            )
+            continue
+
+        # Fetch closes
+        signal_close = fetch_close_on_date(etf, signal_date_str)
+        next_close = fetch_close_on_date(etf, next_date_str)
+
+        if signal_close is None or next_close is None:
+            log.warning(
+                f"  Missing close data for {etf} "
+                f"({signal_date_str} / {next_date_str}) — skipping #{sig_id}"
+            )
+            continue
+
+        # Close-to-close pct change (decimal fraction)
+        drift = round((next_close - signal_close) / signal_close, 4)
+
+        # Determine was_correct:
+        #   1 = rejection validated (sector moved AGAINST predicted direction)
+        #   0 = false negative (sector moved WITH predicted direction)
+        #   NULL = neutral/mixed signal — no direction to validate
+        was_correct = None
+        if direction == "bullish":
+            # Bullish signal was rejected; if sector went down, rejection was right
+            was_correct = 1 if drift < 0 else 0
+        elif direction == "bearish":
+            # Bearish signal was rejected; if sector went up, rejection was right
+            was_correct = 1 if drift > 0 else 0
+        # else: neutral/mixed — leave was_correct NULL (still record drift)
+
+        verified_at = datetime.now(timezone.utc).isoformat()
+
+        conn.execute("""
+            UPDATE signal_ledger
+            SET next_day_drift = ?, was_correct = ?, verified_at = ?
+            WHERE id = ?
+        """, (drift, was_correct, verified_at, sig_id))
+
+        direction_label = direction if direction else "neutral"
+        drift_str = f"{drift:+.1%}"
+        verdict = (
+            "validated" if was_correct == 1
+            else "false-negative" if was_correct == 0
+            else "neutral"
+        )
+        log.info(
+            f"  Rejected #{sig_id}: {sector} {direction_label} "
+            f"drift={drift_str} "
+            f"({signal_close:.2f} -> {next_close:.2f}) "
+            f"→ {verdict}"
+        )
+        verified_count += 1
+
+    conn.commit()
+    log.info(f"Scored {verified_count} rejected signal outcomes")
+    return verified_count
+
+
 def run_verification() -> None:
     log.info("─── Verification run starting ───")
     conn = init_db()
@@ -204,6 +377,10 @@ def run_verification() -> None:
 
     if verified > 0:
         snapshot_portfolio(conn)
+
+    # Score outcomes for previously-rejected signals
+    rejected_scored = verify_rejected_signals(conn)
+    log.info(f"Scored {rejected_scored} rejected signal outcomes")
 
     # Print current accuracy
     total = conn.execute(

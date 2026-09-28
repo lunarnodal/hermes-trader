@@ -76,6 +76,7 @@ _LEDGER_EXPECTED_COLS = {
     "created_at", "query", "sector", "direction",
     "raw_confidence", "adj_confidence", "gate_failed",
     "gate_reason", "sector_win_rate", "vix_at_time", "event_type",
+    "next_day_drift", "was_correct", "verified_at",
 }
 _ledger_validated   = False
 _ledger_write_ok    = True
