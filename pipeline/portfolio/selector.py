@@ -440,7 +440,12 @@ def select_stocks_for_sector(sector: str,
     if exclude_tickers:
         scored = [s for s in scored if s["ticker"] not in exclude_tickers]
 
-    if scored:
+    # Gate: individual stocks require adjusted prediction_confidence >= 0.70
+    # (same threshold as meta_correction ledger gate). If confidence is None
+    # (no prediction row / no meta_correction entry), preserve existing
+    # behavior and allow through (D3 no-op).
+    _pred_conf_ok = prediction_confidence is None or prediction_confidence >= 0.70
+    if scored and _pred_conf_ok:
         # Individual stocks — top 2 ranked
         for stock in scored[:2]:
             price = fetch_current_price(stock["ticker"])
@@ -792,6 +797,7 @@ def generate_recommendations(predictions: list[dict],
                     sector_win_rate=sector_win_rate,
                     event_type=event_type
                 )
+                continue  # FIX: was missing — rejection fell through to stock selection
         confidence = adjusted_confidence
 
         # Direction-specific calibration (from predictions DB, 2026-08-31)
