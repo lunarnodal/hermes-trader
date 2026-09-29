@@ -141,29 +141,59 @@ def query_to_sector(query: str) -> str:
             return sector
     return "macro"
 
+def _init_watermark(conn: sqlite3.Connection) -> None:
+    """Ensure the trim consumption watermark table exists and is seeded."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS trim_consumption_watermark (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_consumed_verified_at TEXT
+        )
+    """)
+    conn.execute("INSERT OR IGNORE INTO trim_consumption_watermark (id) VALUES (1)")
+    conn.commit()
+
+
 def compute_stft() -> dict:
     """
-    Compute short-term fuel trim from yesterday's verified outcomes.
+    Compute short-term fuel trim from newly verified prediction outcomes.
+    Uses a high-water mark to consume each prediction exactly once.
     Returns dict of {sector: stft_correction}
     """
     conn = sqlite3.connect(PAPER_DB)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    _init_watermark(conn)
 
+    row = conn.execute(
+        "SELECT last_consumed_verified_at FROM trim_consumption_watermark WHERE id=1"
+    ).fetchone()
+    watermark = row[0] if row else None
+
+    # First run: watermark is NULL -> consume ALL verified predictions.
+    # Subsequent runs: consume only those verified_at > last watermark.
     rows = conn.execute("""
-        SELECT query, direction, was_correct, confidence
+        SELECT query, direction, was_correct, confidence, verified_at
         FROM predictions
-        WHERE verified_at >= ? AND was_correct IS NOT NULL
+        WHERE was_correct IS NOT NULL
+          AND ( ? IS NULL OR verified_at > ? )
         ORDER BY verified_at DESC
-    """, (cutoff,)).fetchall()
-    conn.close()
+    """, (watermark, watermark)).fetchall()
 
     if not rows:
-        log.info("No verified predictions in last 24h — STFT unchanged")
+        log.info("No newly verified predictions since last trim -- STFT unchanged")
+        conn.close()
         return {}
+
+    # Advance watermark past consumed predictions
+    max_verified = max(r[4] for r in rows)
+    conn.execute(
+        "UPDATE trim_consumption_watermark SET last_consumed_verified_at = ? WHERE id = 1",
+        (max_verified,)
+    )
+    conn.commit()
+    conn.close()
 
     # Accumulate corrections per sector
     sector_results = {}
-    for query, direction, correct, confidence in rows:
+    for query, direction, correct, confidence, _verified_at in rows:
         sector = query_to_sector(query)
         if sector not in sector_results:
             sector_results[sector] = {"correct": 0, "wrong": 0, "total": 0}
