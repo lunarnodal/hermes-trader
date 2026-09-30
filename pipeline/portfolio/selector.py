@@ -600,7 +600,7 @@ def generate_recommendations(predictions: list[dict],
                 sector=sector, query=query, direction=direction,
                 raw_conf=confidence, adj_conf=confidence,
                 gate="direction_confidence",
-                reason=f"direction={direction} conf={confidence:.2f} < 0.70",
+                reason=f"direction={direction}: non-bullish directions are not traded (conf={confidence:.2f})",
                 event_type=event_type
             )
             continue
