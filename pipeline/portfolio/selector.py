@@ -445,7 +445,19 @@ def select_stocks_for_sector(sector: str,
     # (no prediction row / no meta_correction entry), preserve existing
     # behavior and allow through (D3 no-op).
     _pred_conf_ok = prediction_confidence is None or prediction_confidence >= 0.70
-    if scored and _pred_conf_ok:
+
+    # Gate: individual-stock path requires >= 2 corroborating bullish signals
+    # for the sector.  When only 1 signal backs the sector call, idiosyncratic
+    # stock risk outweighs conviction -- route to the sector ETF instead.
+    # Derivation: count of bullish signals mentioning this sector from the
+    # signal corpus (the same quantity the CLS evidence "signal_count=1" refers to).
+    sector_bullish_count = len([
+        s for s in signals
+        if sector in s.get("sectors", []) and s.get("sentiment") == "bullish"
+    ])
+    log.info(f"  Sector {sector}: {sector_bullish_count} corroborating bullish signal(s)")
+
+    if scored and _pred_conf_ok and sector_bullish_count >= 2:
         # Individual stocks — top 2 ranked
         for stock in scored[:2]:
             price = fetch_current_price(stock["ticker"])
@@ -471,6 +483,11 @@ def select_stocks_for_sector(sector: str,
         if prediction_confidence >= 0.70:
             etf    = SECTOR_ETFS.get(sector, "SPY")
             price  = fetch_current_price(etf)
+            _fallback_reason = (
+                f"sector signal count={sector_bullish_count} (< 2, need >= 2)"
+                if sector_bullish_count < 2
+                else "no individual stocks met threshold"
+            )
             if price:
                 recommendations.append({
                     "ticker":        etf,
@@ -481,7 +498,7 @@ def select_stocks_for_sector(sector: str,
                                          if sector in s.get("sectors", [])]),
                     "avg_conf":      prediction_confidence,
                     "current_price": price,
-                    "rationale":     f"ETF fallback — no individual stocks met threshold"
+                    "rationale":     f"ETF fallback — {_fallback_reason}"
                 })
             log.info(f"  → ETF fallback: {etf}")
         else:
