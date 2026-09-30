@@ -36,7 +36,9 @@ STFT_MIN  = -0.20
 
 # Sector keyword mapping — fallback when semantic lookup unavailable
 SECTOR_KEYWORDS = {
-    "technology":  ["technology", "ai", "semiconductor", "data center", "ai_infrastructure"],
+    "ai_infrastructure": ["ai infrastructure", "data center", "gpu demand", "hyperscaler",
+                          "ai infrastructure buildout", "data centre"],
+    "technology":  ["technology", "ai", "semiconductor"],
     "energy":      ["energy", "oil", "gas", "utilities", "renewables"],
     "financials":  ["financial", "bank", "rates", "real estate"],
     "healthcare":  ["healthcare", "biotech", "pharma"],
@@ -49,7 +51,8 @@ SECTOR_KEYWORDS = {
 
 # Sector prototype queries for semantic embedding comparison
 SECTOR_PROTOTYPES = {
-    "technology":  "technology AI semiconductor data center cloud computing software",
+    "ai_infrastructure": "AI infrastructure data center GPU demand hyperscaler semiconductor cloud computing",
+    "technology":  "technology AI semiconductor cloud computing software",
     "energy":      "energy oil gas utilities renewables crude petroleum power",
     "financials":  "financial banking interest rates real estate Fed monetary policy",
     "healthcare":  "healthcare biotech pharma drug approval clinical trial medical",
