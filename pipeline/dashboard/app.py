@@ -892,10 +892,13 @@ function renderThetaCard(theta) {
       const dte = Math.max(0, Math.ceil((new Date(p.expiry)-new Date())/86400000));
       const dteColor = dte<=5?'#EF4444':dte<=14?'#e3b341':'#10B981';
       const riskColor = p.assignment_risk?'#EF4444':'#8b949e';
+      const curPrice = (p.underlying_price && p.underlying_price > 0) ? '$'+Number(p.underlying_price).toFixed(2) : '—';
+      const curColor = p.assignment_risk?'#EF4444':'#8b949e';
       return '<tr style="border-bottom:1px solid #161b22">'+
         '<td style="padding:3px 4px;font-weight:600">'+p.ticker+'</td>'+
         '<td style="padding:3px 4px;color:#8b949e">'+(p.instrument_type==='covered_call'?'CC':'CSP')+'</td>'+
         '<td style="text-align:right;padding:3px 4px">$'+p.strike.toFixed(0)+'</td>'+
+        '<td style="text-align:right;padding:3px 4px;color:'+curColor+'">'+curPrice+'</td>'+
         '<td style="text-align:right;padding:3px 4px;color:'+dteColor+'">'+dte+'</td>'+
         '<td style="text-align:right;padding:3px 4px;color:'+riskColor+'">'+fmtPrem(p.premium)+'</td>'+
         '</tr>';
@@ -906,6 +909,7 @@ function renderThetaCard(theta) {
       '<th style="text-align:left;padding:3px 4px">Ticker</th>'+
       '<th style="text-align:left;padding:3px 4px">Type</th>'+
       '<th style="text-align:right;padding:3px 4px">Strike</th>'+
+      '<th style="text-align:right;padding:3px 4px">Current</th>'+
       '<th style="text-align:right;padding:3px 4px">DTE</th>'+
       '<th style="text-align:right;padding:3px 4px">Premium</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';

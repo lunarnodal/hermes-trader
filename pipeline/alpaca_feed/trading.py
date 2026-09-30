@@ -135,7 +135,7 @@ def get_theta_positions() -> list[dict]:
     Calls Alpaca get_all_positions, filters for short options
     (short_call/short_put), parses option symbols for strike/expiry,
     computes premium (avg_price * qty), and flags assignment_risk
-    when underlying price is within 10% of strike.
+    when underlying price is within 5% of strike (money-side).
     Returns list of dicts with:
       ticker, option_symbol, instrument_type (covered_call/cash_secured_put),
       strike, expiry, premium, assignment_risk
@@ -166,9 +166,9 @@ def get_theta_positions() -> list[dict]:
                 current = pos.get("current_price", 0)
                 assignment_risk = False
                 if current and strike:
-                    if cp == "C" and current >= strike * 0.9:
+                    if cp == "C" and current >= strike * 0.95:
                         assignment_risk = True
-                    elif cp == "P" and current <= strike * 1.1:
+                    elif cp == "P" and current <= strike * 1.05:
                         assignment_risk = True
                 theta_positions.append({
                     "ticker": underlying,
@@ -178,6 +178,7 @@ def get_theta_positions() -> list[dict]:
                     "expiry": expiry,
                     "premium": round(premium, 2),
                     "assignment_risk": assignment_risk,
+                    "underlying_price": current,
                 })
             except (ValueError, IndexError) as e:
                 log.debug(f"Could not parse option symbol {symbol}: {e}")

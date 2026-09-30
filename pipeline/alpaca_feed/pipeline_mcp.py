@@ -1296,7 +1296,9 @@ def get_theta_positions() -> str:
             current_price = prices.get(ticker)
             assignment_risk = False
             if current_price and instrument_type == "cash_secured_put":
-                assignment_risk = current_price <= strike * 1.02
+                assignment_risk = current_price <= strike * 1.05
+            elif current_price and instrument_type == "covered_call":
+                assignment_risk = current_price >= strike * 0.95
 
             pnl_pct = None
             if status == 'open' and current_price:
