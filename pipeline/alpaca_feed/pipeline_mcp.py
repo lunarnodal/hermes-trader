@@ -688,7 +688,6 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
 
     # Step 2: All gates passed — place the order
     try:
-        from alpaca_feed.trading_hackathon import place_market_order
         result = place_market_order(
             ticker, shares, side,
             reason=f"Hermes-initiated {side} — all gates passed"
@@ -850,45 +849,6 @@ def get_organic_account_info() -> str:
         } for p in positions]
         return json.dumps({
             'account': 'organic',
-            'account_number': account.account_number,
-            'cash': float(account.cash),
-            'portfolio_value': float(account.portfolio_value),
-            'positions': pos_list,
-            'open_positions': len(pos_list),
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@instrumented_tool()
-@mcp.tool()
-def get_hackathon_account_info() -> str:
-    """
-    Get account info for the hackathon demo account (PA3Y2DOOQXZW).
-    This is the clean account started Aug 28, 2026 for the hackathon.
-    Use this to see positions placed via Hermes or mirrored from organic.
-    """
-    try:
-        from alpaca.trading.client import TradingClient
-        import os
-        client = TradingClient(
-            os.getenv("ALPACA_HACKATHON_KEY"),
-            os.getenv("ALPACA_HACKATHON_SECRET"),
-            paper=True
-        )
-        account = client.get_account()
-        positions = client.get_all_positions()
-        pos_list = [{
-            'ticker': p.symbol,
-            'qty': float(p.qty),
-            'avg_cost': float(p.avg_entry_price),
-            'market_value': float(p.market_value),
-            'unrealized_pl': float(p.unrealized_pl),
-            'unrealized_plpc': f"{float(p.unrealized_plpc)*100:+.1f}%",
-            'current_price': float(p.current_price),
-        } for p in positions]
-        return json.dumps({
-            'account': 'hackathon',
             'account_number': account.account_number,
             'cash': float(account.cash),
             'portfolio_value': float(account.portfolio_value),

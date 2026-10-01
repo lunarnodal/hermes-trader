@@ -271,70 +271,6 @@ def _alpaca_mirror(action, ticker, shares, reason="", conn=None):
                 pass
         _execution_breaker.record_failure()
         log.warning(f"Alpaca mirror failed (non-fatal): {_e}")
-    _alpaca_mirror_hackathon(action, ticker, shares, reason, conn=conn)
-
-
-def _alpaca_mirror_hackathon(action, ticker, shares, reason="", conn=None):
-    """Mirror trade to hackathon Alpaca account with intent journaling."""
-    if _execution_breaker.is_tripped:
-        return  # already skipped in _alpaca_mirror
-    try:
-        from alpaca_feed.trading_hackathon import place_market_order, get_position
-        client_id = generate_client_order_id("llm", ticker, action.lower(), shares)
-        # ── Intent journal: record BEFORE action ──
-        intent_id = None
-        if conn is not None:
-            try:
-                from portfolio.db import record_intent
-                intent_id = record_intent(conn, account="hk", action=action.lower(),
-                                          symbol=ticker, qty=shares,
-                                          client_order_id=client_id)
-            except Exception as _ie:
-                log.error("[INTENT] Failed to journal hk intent for %s %s — "
-                          "ORDER BLOCKED: %s", action, ticker, _ie)
-                return
-        if action == "BUY":
-            result = place_market_order(ticker, shares, "buy", reason,
-                                        client_order_id=client_id)
-        elif action in ("SELL", "PARTIAL_SELL"):
-            pos = get_position(ticker)
-            if not pos:
-                log.info(f"Hackathon mirror: skipping {action} {ticker} — no position in hackathon account")
-                if intent_id is not None and conn is not None:
-                    try:
-                        from portfolio.db import update_intent_state
-                        update_intent_state(conn, intent_id, state="failed")
-                    except Exception:
-                        pass
-                return
-            available = pos.get("qty", 0)
-            sell_shares = min(shares, available)
-            if sell_shares <= 0:
-                return
-            result = place_market_order(ticker, sell_shares, "sell", reason,
-                                        client_order_id=client_id)
-        else:
-            result = {"success": False, "error": f"Unknown action: {action}"}
-        # ── Update intent state after broker call ──
-        if conn is not None and intent_id is not None:
-            try:
-                from portfolio.db import update_intent_state
-                if result.get("success"):
-                    update_intent_state(conn, intent_id, state="submitted",
-                                        broker_order_id=result.get("order_id"))
-                else:
-                    update_intent_state(conn, intent_id, state="failed")
-            except Exception as _ue:
-                log.warning("[INTENT] Failed to update hk intent for %s: %s",
-                            client_id, _ue)
-    except Exception as _e:
-        if intent_id is not None and conn is not None:
-            try:
-                from portfolio.db import update_intent_state
-                update_intent_state(conn, intent_id, state="failed")
-            except Exception:
-                pass
-        log.warning(f"Hackathon mirror failed (non-fatal): {_e}")
 
 
 def is_macro_bearish() -> bool:
@@ -581,7 +517,6 @@ def check_time_exits(conn, dry_run: bool = False) -> list[dict]:
             if not dry_run:
                 result = close_position(conn, pos["id"], current_price, reason)
                 _alpaca_mirror("SELL", ticker, pos["shares"], reason, conn=conn)
-                _alpaca_mirror_hackathon("SELL", ticker, pos["shares"], reason, conn=conn)
                 actions.append({"action": "SELL", "reason": "time_exit", **result})
 
     conn.commit()
@@ -836,7 +771,6 @@ def reconcile_intents(conn, grace_seconds=120):
                 from alpaca_feed.trading import get_order_by_client_order_id
                 broker_order = get_order_by_client_order_id(cid)
             elif acct == "hk":
-                from alpaca_feed.trading_hackathon import get_order_by_client_order_id
                 broker_order = get_order_by_client_order_id(cid)
         except Exception as _e:
             log.warning(f"[RECONCILE] Broker lookup failed for {cid}: {_e}")

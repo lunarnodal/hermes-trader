@@ -57,3 +57,5 @@ pipeline/**/*.bak*
 pipeline/dashboard/app.py.before-emerald
 **/*.bak_*
 pipeline/**/*.bak
+backups/
+research/*.json

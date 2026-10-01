@@ -31,7 +31,7 @@ SIGNALS_DIR = Path("/mnt/qnap/timeseries/signals")
 
 ACCOUNTS_CONFIG = {
     "PA3I1CJSOEVO": "Organic",
-    "PA3Y2DOOQXZW": "Hackathon",
+    
 }
 
 DEFAULT_ACCOUNT = "PA3I1CJSOEVO"
@@ -914,7 +914,7 @@ function renderThetaCard(theta) {
       '<th style="text-align:right;padding:3px 4px">Premium</th>'+
       '</tr></thead><tbody>'+rows+'</tbody></table>';
   }
-  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.organic && theta.organic.positions, 'Organic') + posRows(theta.hackathon && theta.hackathon.positions, 'Hackathon');
+  document.getElementById('thetaCard').innerHTML = statsHtml + posRows(theta.organic && theta.organic.positions, 'Organic');
 }
 
 
@@ -1403,12 +1403,10 @@ def api_data():
         theta_raw = get_theta_positions()
         # All theta positions come from organic account (CSPs/CCs)
         organic_pos = theta_raw
-        hackathon_pos = []
         total_premium = sum(p["premium"] for p in theta_raw)
         assignment_risk_count = sum(1 for p in theta_raw if p["assignment_risk"])
         data["theta"] = {
             "organic": {"positions": organic_pos, "count": len(organic_pos)},
-            "hackathon": {"positions": hackathon_pos, "count": len(hackathon_pos)},
             "aggregate": {
                 "total_premium": round(total_premium, 2),
                 "assignment_risk_count": assignment_risk_count,
