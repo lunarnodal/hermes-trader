@@ -136,12 +136,41 @@ def get_theta_positions() -> list[dict]:
     (short_call/short_put), parses option symbols for strike/expiry,
     computes premium (avg_price * qty), and flags assignment_risk
     when underlying price is within 5% of strike (money-side).
+    underlying_price is the underlying asset's live price (via get_live_prices),
+    not the option premium.
     Returns list of dicts with:
       ticker, option_symbol, instrument_type (covered_call/cash_secured_put),
-      strike, expiry, premium, assignment_risk
+      strike, expiry, premium, assignment_risk, underlying_price
     """
+    # Lazy import for get_live_prices — mirrors existing try/except pattern
+    try:
+        from alpaca_feed.data import get_live_prices
+    except ImportError:
+        get_live_prices = None
+
     try:
         positions = get_all_positions()
+
+        # Collect unique underlying tickers from valid short option rows, then batch-fetch
+        uniques = set()
+        for pos in positions:
+            symbol = pos.get("ticker", "")
+            if len(symbol) < 14 or not any(c.isdigit() for c in symbol[3:8]):
+                continue
+            if symbol[9] not in ("C", "P"):
+                continue
+            if pos.get("qty", 0) >= 0:
+                continue
+            uniques.add(symbol[:3].strip())
+        # Fetch underlying prices; on ANY runtime failure (network, bad response)
+        # fall back to {} — positions must still be returned with
+        # underlying_price=0 / assignment_risk=False, never swallowed into [].
+        try:
+            underlying_prices = get_live_prices(list(uniques)) if get_live_prices else {}
+        except Exception as e:
+            log.warning("get_live_prices failed for theta positions: %s", e)
+            underlying_prices = {}
+
         theta_positions = []
         for pos in positions:
             symbol = pos.get("ticker", "")
@@ -163,7 +192,7 @@ def get_theta_positions() -> list[dict]:
                 instrument_type = "covered_call" if cp == "C" else "cash_secured_put"
                 qty = abs(pos.get("qty", 0))
                 premium = pos.get("avg_cost", 0) * qty * 100
-                current = pos.get("current_price", 0)
+                current = underlying_prices.get(underlying)
                 assignment_risk = False
                 if current and strike:
                     if cp == "C" and current >= strike * 0.95:
@@ -178,7 +207,7 @@ def get_theta_positions() -> list[dict]:
                     "expiry": expiry,
                     "premium": round(premium, 2),
                     "assignment_risk": assignment_risk,
-                    "underlying_price": current,
+                    "underlying_price": current or 0,
                 })
             except (ValueError, IndexError) as e:
                 log.debug(f"Could not parse option symbol {symbol}: {e}")
