@@ -28,6 +28,10 @@ from ingest_cards import (
     ingest_report,
     create_kanban_card,
     fetch_remote_report,
+    is_calibration_card,
+    get_sector_ltft,
+    _check_ranking_claim_date,
+    CANONICAL_SECTORS,
     DEFAULT_REPORT_DIR,
 )
 
@@ -500,6 +504,313 @@ def test_ingest_all_text():
 
 
 # -----------------------------------------------------------------------
+# Test 17: Sector-trim gate — skip calibration card when LTFT <= -0.10
+# -----------------------------------------------------------------------
+def test_trim_gate_skip():
+    print("\nTest 17: Trim gate — skip when LTFT <= -0.10")
+
+    call_log = []
+
+    def _cmd_str(cmd):
+        return " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+    def fake_run(cmd, **kwargs):
+        cs = _cmd_str(cmd)
+        call_log.append(cmd)
+        if "sqlite3" in cs and "sector_trim" in cs:
+            return mock.Mock(returncode=0, stdout="-0.187\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "create" in cs:
+            return mock.Mock(returncode=0, stdout="Created task t_test001\n")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    report_text = """
+## Kanban Cards to Create
+1. `fin-overconfidence-fix` — **Discount financials overconfidence** (Risk: medium | Sectors: financials | Owner: orchestrator)
+   - Evidence: financials showed worst Brier score
+   - Expected impact: reduce false bearish signals
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Skipped 1 (gate)", result["skipped"] == 1, f"skipped={result['skipped']}")
+        check("Created 0 (gate blocked)", result["created"] == 0, f"created={result['created']}")
+
+        m = load_manifest(manifest)
+        skipped_entries = [c for c in m["cards"] if c.get("skipped")]
+        check("Manifest has 1 skipped entry", len(skipped_entries) == 1)
+        if skipped_entries:
+            check("Skipped reason mentions -0.187", "-0.187" in skipped_entries[0].get("reason", ""))
+            check("Skipped reason mentions sector_trim", "sector_trim" in skipped_entries[0].get("reason", ""))
+
+    create_calls = [c for c in call_log if "create" in _cmd_str(c)]
+    check("hermes kanban create NOT called", len(create_calls) == 0)
+
+
+# -----------------------------------------------------------------------
+# Test 18: Sector-trim gate — file card when LTFT > -0.10
+# -----------------------------------------------------------------------
+def test_trim_gate_file():
+    print("\nTest 18: Trim gate — file when LTFT > -0.10")
+
+    call_log = []
+
+    def _cmd_str(cmd):
+        return " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+    def fake_run(cmd, **kwargs):
+        cs = _cmd_str(cmd)
+        call_log.append(cmd)
+        if "sqlite3" in cs and "sector_trim" in cs:
+            return mock.Mock(returncode=0, stdout="-0.02\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "create" in cs:
+            return mock.Mock(returncode=0, stdout="Created task t_test002\n")
+        if "hermes" in cs and "kanban" in cs and "reclaim" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "block" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    report_text = """
+## Kanban Cards to Create
+1. `fin-overconfidence-fix2` — **Discount financials overconfidence** (Risk: medium | Sectors: financials | Owner: orchestrator)
+   - Evidence: financials showed worst Brier score
+   - Expected impact: reduce false bearish signals
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+    check("Created 1 (LTFT > -0.10)", result["created"] == 1, f"created={result['created']}")
+    check("Skipped 0", result["skipped"] == 0, f"skipped={result['skipped']}")
+
+    m = load_manifest(manifest)
+    skipped_entries = [c for c in m["cards"] if c.get("skipped")]
+    check("No skipped entries in manifest", len(skipped_entries) == 0)
+
+    create_calls = [c for c in call_log if "create" in _cmd_str(c)]
+    check("hermes kanban create called", len(create_calls) == 1)
+
+
+# -----------------------------------------------------------------------
+# Test 19: Sector-trim gate — fail-open when SSH fails
+# -----------------------------------------------------------------------
+def test_trim_gate_fail_open():
+    print("\nTest 19: Trim gate — fail-open on SSH error")
+
+    call_log = []
+
+    def _cmd_str(cmd):
+        return " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+    def fake_run(cmd, **kwargs):
+        cs = _cmd_str(cmd)
+        call_log.append(cmd)
+        if "sqlite3" in cs and "sector_trim" in cs:
+            return mock.Mock(returncode=255, stdout="", stderr="Connection refused")
+        if "hermes" in cs and "kanban" in cs and "create" in cs:
+            return mock.Mock(returncode=0, stdout="Created task t_test003\n")
+        if "hermes" in cs and "kanban" in cs and "reclaim" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "block" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    report_text = """
+## Kanban Cards to Create
+1. `fin-overconfidence-fix3` — **Discount financials overconfidence** (Risk: medium | Sectors: financials | Owner: orchestrator)
+   - Evidence: financials Brier rank
+   - Expected impact: reduce false bearish signals
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+    check("Created 1 (fail-open)", result["created"] == 1, f"created={result['created']}")
+    check("Skipped 0", result["skipped"] == 0, f"skipped={result['skipped']}")
+
+    create_calls = [c for c in call_log if "hermes" in c and "create" in c]
+    check("hermes kanban create called (fail-open)", len(create_calls) == 1)
+
+
+# -----------------------------------------------------------------------
+# Test 20: Sector-trim gate — empty row (unknown sector) files card
+# -----------------------------------------------------------------------
+def test_trim_gate_unknown_sector_row():
+    print("\nTest 20: Trim gate — empty stdout (no row) -> filed")
+
+    call_log = []
+
+    def _cmd_str(cmd):
+        return " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+    def fake_run(cmd, **kwargs):
+        cs = _cmd_str(cmd)
+        call_log.append(cmd)
+        if "sqlite3" in cs and "sector_trim" in cs:
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        if "hermes" in cs and "kanban" in cs and "create" in cs:
+            return mock.Mock(returncode=0, stdout="Created task t_test004\n")
+        if "hermes" in cs and "kanban" in cs and "reclaim" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "block" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    report_text = """
+## Kanban Cards to Create
+1. `energy-overconfidence-fix` — **Discount energy overconfidence** (Risk: medium | Sectors: energy | Owner: orchestrator)
+   - Evidence: energy Brier rank
+   - Expected impact: reduce false bearish signals
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+    check("Created 1 (no row -> filed)", result["created"] == 1, f"created={result['created']}")
+    check("Skipped 0", result["skipped"] == 0, f"skipped={result['skipped']}")
+
+
+# -----------------------------------------------------------------------
+# Test 21: Ranking claim without date — warning logged, card still filed
+# -----------------------------------------------------------------------
+def test_ranking_claim_no_date_logged():
+    print("\nTest 21: Ranking claim without date -> warning + filed")
+
+    call_log = []
+
+    def _cmd_str(cmd):
+        return " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+    def fake_run(cmd, **kwargs):
+        cs = _cmd_str(cmd)
+        call_log.append(cmd)
+        if "sqlite3" in cs and "sector_trim" in cs:
+            return mock.Mock(returncode=0, stdout="0.0\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "create" in cs:
+            return mock.Mock(returncode=0, stdout="Created task t_test005\n")
+        if "hermes" in cs and "kanban" in cs and "reclaim" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        if "hermes" in cs and "kanban" in cs and "block" in cs:
+            return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    report_text = """
+## Kanban Cards to Create
+1. `fin-worst-performer` — **Fix financials worst-performer signal** (Risk: medium | Sectors: financials | Owner: orchestrator)
+   - Evidence: financials 2nd-worst Brier score in recent window
+   - Expected impact: improve signal quality
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+    check("Created 1 (ranking claim is log-only)", result["created"] == 1, f"created={result['created']}")
+    check("Skipped 0", result["skipped"] == 0, f"skipped={result['skipped']}")
+
+
+# -----------------------------------------------------------------------
+# Test 22: is_calibration_card detection
+# -----------------------------------------------------------------------
+def test_is_calibration_card_detection():
+    print("\nTest 22: is_calibration_card detection")
+
+    cal_card = {"card_id": "x", "title": "Discount financials overconfidence",
+                "evidence": "", "expected_impact": ""}
+    is_cal, sector = is_calibration_card(cal_card)
+    check("Detects overconfidence+financials", is_cal and sector == "financials",
+          f"is_cal={is_cal}, sector={sector}")
+
+    cal_card2 = {"card_id": "y", "title": "Fix Brier score for technology",
+                 "evidence": "", "expected_impact": ""}
+    is_cal2, sector2 = is_calibration_card(cal_card2)
+    check("Detects Brier+technology", is_cal2 and sector2 == "technology",
+          f"is_cal={is_cal2}, sector={sector2}")
+
+    normal_card = {"card_id": "z", "title": "Fix API timeout",
+                   "evidence": "", "expected_impact": ""}
+    is_cal3, sector3 = is_calibration_card(normal_card)
+    check("Non-calibration card not flagged", not is_cal3, f"is_cal={is_cal3}")
+
+    cal_no_sector = {"card_id": "w", "title": "Discount something generic",
+                     "evidence": "", "expected_impact": ""}
+    is_cal4, sector4 = is_calibration_card(cal_no_sector)
+    check("Cal keyword no sector -> not calibration", not is_cal4 and sector4 is None,
+          f"is_cal={is_cal4}, sector={sector4}")
+
+
+# -----------------------------------------------------------------------
+# Test 23: get_sector_ltft function
+# -----------------------------------------------------------------------
+def test_get_sector_ltft():
+    print("\nTest 23: get_sector_ltft function")
+
+    def fake_run(cmd, **kwargs):
+        return mock.Mock(returncode=0, stdout="-0.187\n", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run):
+        val = get_sector_ltft("financials", "trading@172.29.10.225")
+    check("Returns float -0.187", val == -0.187, f"got {val}")
+
+    def fake_run_empty(cmd, **kwargs):
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    with mock.patch("subprocess.run", side_effect=fake_run_empty):
+        val2 = get_sector_ltft("defense", "trading@172.29.10.225")
+    check("Empty stdout -> None", val2 is None, f"got {val2}")
+
+    def fake_run_error(cmd, **kwargs):
+        return mock.Mock(returncode=255, stdout="", stderr="Connection refused")
+
+    with mock.patch("subprocess.run", side_effect=fake_run_error):
+        val3 = get_sector_ltft("energy", "trading@172.29.10.225")
+    check("SSH error -> None", val3 is None, f"got {val3}")
+
+    val4 = get_sector_ltft("unknown_sector", "trading@172.29.10.225")
+    check("Non-canonical sector -> None", val4 is None, f"got {val4}")
+
+
+# -----------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------
 
@@ -525,6 +836,13 @@ def main():
     test_ingest_ungated_summary()
     test_parse_inline_no_backtick()
     test_ingest_all_text()
+    test_trim_gate_skip()
+    test_trim_gate_file()
+    test_trim_gate_fail_open()
+    test_trim_gate_unknown_sector_row()
+    test_ranking_claim_no_date_logged()
+    test_is_calibration_card_detection()
+    test_get_sector_ltft()
 
     print("\n" + "=" * 60)
     print(f"Results: {PASS} passed, {FAIL} failed")

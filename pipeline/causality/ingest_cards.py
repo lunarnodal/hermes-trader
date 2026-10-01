@@ -26,6 +26,16 @@ Manifest:
     local:    /home/trading/trading-ai/reports/causality/kanban_manifest.json
     — Atomic write (tmp + rename)
     — Skips cards whose card_id already exists
+
+Sector-trim gate (calibration cards):
+    Cards whose title/body mention calibration-related terms and target
+    a known sector are checked against the sector_trim LTFT table.
+    If the sector's LTFT <= -0.10 the card is skipped (manifest entry
+    carries "skipped": true). Skipped cards are NOT frozen: because
+    card_exists() only matches on card_id, a re-proposal on a later
+    day WILL be re-evaluated by the gate (and skipped again if still
+    trimmed). This prevents duplicate calibration work when the nightly
+    trim loop already covers the sector.
 """
 
 import argparse
@@ -47,6 +57,140 @@ DEFAULT_REPORT_DIR = "/home/trading/trading-ai/reports/causality"
 MANIFEST_PATH = os.path.join(DEFAULT_REPORT_DIR, "kanban_manifest.json")
 REMOTE_MANIFEST_DIR = "/home/sam/.hermes/cron/causality"
 REMOTE_MANIFEST_PATH = os.path.join(REMOTE_MANIFEST_DIR, "kanban_manifest.json")
+
+# Canonical sector tokens (longest-first for matching)
+CANONICAL_SECTORS = [
+    "ai_infrastructure",
+    "financials",
+    "healthcare",
+    "industrials",
+    "technology",
+    "materials",
+    "consumer",
+    "energy",
+    "macro",
+    "defense",
+]
+
+# ---------------------------------------------------------------------------
+# Calibration-card detection & sector-trim gate
+# ---------------------------------------------------------------------------
+
+
+def is_calibration_card(card: dict[str, Any]) -> tuple[bool, str | None]:
+    """Check if a card is a calibration card targeting a known sector.
+
+    A card qualifies as a calibration card if its title or body matches
+    one of: overconfidence, overconfident, discount, trim, sector_trim,
+    Brier, or confidence within ~40 chars of calibrat|throttl.
+
+    Returns (is_calibration, sector) where sector is the first canonical
+    sector token found (case-insensitive), or None if no sector matched.
+    If the calibration keywords match but no sector is found, returns
+    (False, None) -- treat as a normal card.
+    """
+    title = card.get("title", "")
+    body = ""
+    if card.get("evidence"):
+        body += f" {card['evidence']}"
+    if card.get("expected_impact"):
+        body += f" {card['expected_impact']}"
+    combined = f"{title} {body}"
+    combined_lower = combined.lower()
+
+    calibration_keywords = ["overconfidence", "overconfident", "discount",
+                            "trim", "sector_trim", "brier"]
+    is_cal = any(kw in combined_lower for kw in calibration_keywords)
+
+    if not is_cal:
+        prox_match = re.search(
+            r"confidence.{0,40}(?:calibrat|throttl)|"
+            r"(?:calibrat|throttl).{0,40}confidence",
+            combined_lower,
+        )
+        if prox_match:
+            is_cal = True
+
+    if not is_cal:
+        return (False, None)
+
+    for sector in CANONICAL_SECTORS:
+        pat = r"(?i)(?:^|[^a-zA-Z0-9_])" + re.escape(sector) + r"(?:$|[^a-zA-Z0-9_])"
+        if re.search(pat, combined):
+            log.info("Calibration card detected: %s targets sector %s",
+                      card["card_id"], sector)
+            return (True, sector)
+
+    log.info("Calibration keywords in %s but no canonical sector found -- filing as normal card.",
+             card["card_id"])
+    return (False, None)
+
+
+def get_sector_ltft(sector: str, host: str) -> float | None:
+    """Query the sector_trim table for a sector's LTFT value.
+
+    Runs an SSH command to hit the paper_trading.db directly.
+    Returns the LTFT as a float, or None on any failure (fail-open).
+
+    This function is designed to be monkeypatchable for tests.
+    """
+    if sector not in CANONICAL_SECTORS:
+        log.warning("get_sector_ltft called with non-canonical sector '%s' -- returning None.", sector)
+        return None
+
+    cmd = [
+        "ssh", host,
+        f'sqlite3 /home/trading/trading-ai/data/paper_trading.db '
+        f'"SELECT ROUND(ltft,3) FROM sector_trim WHERE sector=\"{sector}\";"',
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            log.warning("LTFT lookup failed for %s (exit=%d): %s",
+                        sector, result.returncode, result.stderr.strip()[-200:])
+            return None
+        raw = result.stdout.strip()
+        if not raw:
+            log.warning("LTFT lookup returned empty for %s -- no row found.", sector)
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            log.warning("LTFT lookup for %s returned non-float '%s'.", sector, raw)
+            return None
+    except subprocess.TimeoutExpired:
+        log.warning("LTFT lookup timed out for %s -- filing card as-is (fail-open).", sector)
+        return None
+    except FileNotFoundError:
+        log.warning("LTFT lookup: ssh not found -- filing card as-is (fail-open).")
+        return None
+    except Exception as e:
+        log.warning("LTFT lookup failed for %s (%s) -- filing card as-is (fail-open).", sector, e)
+        return None
+
+
+def _check_ranking_claim_date(card: dict[str, Any]) -> None:
+    """Log a warning if a card cites a ranking claim without a snapshot date.
+
+    If the card body contains worst and no ISO date token (YYYY-MM-DD) appears,
+    logs a warning. This is informational only -- does NOT skip the card.
+    """
+    body_parts = []
+    if card.get("evidence"):
+        body_parts.append(card["evidence"])
+    if card.get("expected_impact"):
+        body_parts.append(card["expected_impact"])
+    body_text = " ".join(body_parts)
+
+    has_worst = bool(re.search(r"worst", body_text, re.IGNORECASE))
+    has_date = bool(re.search(r"\d{4}-\d{2}-\d{2}", body_text))
+
+    if has_worst and not has_date:
+        log.warning(
+            "Ranking claim in %s cites no snapshot date -- check it is computed over >=30d, not a 48h window.",
+            card["card_id"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # Parsing
@@ -361,11 +505,14 @@ def create_kanban_card(card: dict, report_file: str) -> dict | None:
 
 
 def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run: bool = False,
-                  report_text: str | None = None, report_file: str | None = None) -> dict:
+                  report_text: str | None = None, report_file: str | None = None,
+                  host: str = "trading@172.29.10.225") -> dict:
     """Ingest a single causality report.
 
     If report_text is provided, parse from text instead of reading a file
     (used by --remote mode).
+    The ``host`` kwarg is used for the sector-trim LTFT lookup; defaults
+    to the airig box.
     Returns summary: {created: N, skipped: N, errors: N, ungated: N}
     """
     manifest_path = os.path.expanduser(manifest_path)
@@ -402,6 +549,32 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
             log.info("Skipping %s — already in manifest.", card_id)
             skipped += 1
             continue
+
+        # Ranking-claim date check (informational warning only)
+        _check_ranking_claim_date(card)
+
+        # Sector-trim gate: skip calibration cards for already-trimmed sectors
+        is_cal, cal_sector = is_calibration_card(card)
+        if is_cal and cal_sector is not None:
+            ltft = get_sector_ltft(cal_sector, host)
+            if ltft is not None and ltft <= -0.10:
+                reason = (f"already trimmed at {ltft} by sector_trim "
+                           "(auto-calibration covers it)")
+                manifest["cards"].append({
+                    "card_id": card_id,
+                    "title": card["title"],
+                    "skipped": True,
+                    "reason": reason,
+                    "report_file": report_file,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+                if dry_run:
+                    log.info("[DRY RUN] Would skip card: %s — %s", card_id, reason)
+                else:
+                    log.info("Skipping %s — sector_trim gate: %s LTFT=%s <= -0.10.",
+                             card_id, cal_sector, ltft)
+                skipped += 1
+                continue
 
         # Create
         if not dry_run:
@@ -523,6 +696,7 @@ def main():
             dry_run=args.dry_run,
             report_text=text,
             report_file=filename,
+            host=args.host,
         )
     elif args.report:
         result = ingest_report(args.report, args.manifest or MANIFEST_PATH, args.dry_run)
