@@ -1225,6 +1225,7 @@ def api_data():
                 'stop_loss':       p['stop_loss'],
                 'take_profit':     p['take_profit'],
                 'hold_days':       p['hold_days'],
+                'tiers_triggered': p.get('tiers_triggered', 0),
             }
             for p in positions
         ]
