@@ -248,8 +248,35 @@ def write_rule_performance(conn: sqlite3.Connection,
         if kw.replace("_", " ") in text_lower or kw in text_lower:
             triggers.add(kw)
 
+    # -- Critic verdict logging (runs regardless of triggers) --
+    # Must be BEFORE the `if not triggers: return` guard so that predictions
+    # with critic_verdict but no rule references in reasoning_summary still
+    # get their critic_verdict row written. (Root-cause t_f46c1c07)
+    inserted = 0
+    if critic_verdict and critic_verdict.strip():
+        verdict_trigger = f"critic_verdict:{critic_verdict.strip()}"
+        existing = conn.execute(
+            "SELECT id FROM rule_performance "
+            "WHERE prediction_id = ? AND rule_trigger = ?",
+            (prediction_id, verdict_trigger)
+        ).fetchone()
+        if not existing:
+            prob = probability if probability is not None else 0.5
+            brier = (prob - (1 if was_correct else 0)) ** 2
+            conn.execute(
+                "INSERT INTO rule_performance "
+                "(rule_trigger, evaluated_at, prediction_id, was_correct, "
+                "signal_confidence, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (verdict_trigger, evaluated_at, prediction_id, was_correct,
+                 prob, f"brier={brier:.4f}")
+            )
+            inserted += 1
+
+    # -- Contributing-rule writeback (skipped when no rules found) --
     if not triggers:
         log.debug(f"No contributing rules found for prediction #{prediction_id}")
+        # Do NOT return yet - critic_verdict already handled above
         return
 
     # Resolve real sector from the prediction query
@@ -275,7 +302,6 @@ def write_rule_performance(conn: sqlite3.Connection,
         except Exception:
             pass
 
-    inserted = 0
     for trigger in sorted(triggers):
         # Idempotency check: skip if already recorded
         existing = conn.execute(
@@ -299,27 +325,6 @@ def write_rule_performance(conn: sqlite3.Connection,
              confidence, notes_str)
         )
         inserted += 1
-
-    # Critic verdict logging — one row per verdict
-    if critic_verdict and critic_verdict.strip():
-        verdict_trigger = f"critic_verdict:{critic_verdict.strip()}"
-        existing = conn.execute(
-            "SELECT id FROM rule_performance "
-            "WHERE prediction_id = ? AND rule_trigger = ?",
-            (prediction_id, verdict_trigger)
-        ).fetchone()
-        if not existing:
-            prob = probability if probability is not None else 0.5
-            brier = (prob - (1 if was_correct else 0)) ** 2
-            conn.execute(
-                "INSERT INTO rule_performance "
-                "(rule_trigger, evaluated_at, prediction_id, was_correct, "
-                "signal_confidence, notes) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (verdict_trigger, evaluated_at, prediction_id, was_correct,
-                 prob, f"brier={brier:.4f}")
-            )
-            inserted += 1
 
     if inserted > 0:
         log.info(f"Recorded {inserted} rule performance row(s) for prediction #{prediction_id}")
@@ -553,7 +558,28 @@ def critic_verdict_stats(conn: sqlite3.Connection) -> dict:
     Queries rule_performance rows where rule_trigger starts with
     'critic_verdict:'. Groups by the verdict suffix (approve/challenge/reject).
     Returns dict keyed by verdict with counts, hit rates, and mean Brier scores.
+
+    Also emits a WARNING if the newest critic_verdict row is > 3 days old,
+    indicating a possible writeback regression.
     """
+    # Staleness check - regression guard (t_f46c1c07)
+    newest = conn.execute(
+        "SELECT MAX(evaluated_at) FROM rule_performance "
+        "WHERE rule_trigger LIKE 'critic_verdict:'"
+    ).fetchone()
+    if newest and newest[0]:
+        try:
+            ts = datetime.fromisoformat(newest[0])
+            age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
+            if age_days > 3:
+                log.warning(
+                    f"critic_verdict rule_performance data is stale: "
+                    f"newest row is {age_days:.1f} days old ({newest[0]})"
+                )
+        except (ValueError, TypeError):
+            pass
+    else:
+        log.warning("No critic_verdict rule_performance rows found - writeback may be broken")
     rows = conn.execute(
         "SELECT rule_trigger, was_correct, signal_confidence, notes "
         "FROM rule_performance "
