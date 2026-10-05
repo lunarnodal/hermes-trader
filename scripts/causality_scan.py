@@ -5,7 +5,7 @@ Run via cron job 0679a8e2116a (9:00 AM ET M-F)
 Creates new Kanban cards via hermes CLI subprocess.
 
 Workflow:
-  1. Read all causality_report_*.md in /home/trading/trading-ai/reports/causality/
+  1. Read all causality_report_*.md in /mnt/qnap/timeseries/reports/causality/
   2. Extract ## Kanban Cards to Create section
   3. Dedupe against kanban_manifest.json (known card IDs)
   4. For new cards: write .md card file + call `hermes kanban create`

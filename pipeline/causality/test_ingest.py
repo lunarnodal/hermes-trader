@@ -191,7 +191,7 @@ def test_manifest_io():
 # -----------------------------------------------------------------------
 def test_dry_run_real_report():
     print("\nTest 7: Dry-run on real report (09-17)")
-    report = "/home/trading/trading-ai/reports/causality/causality_report_2026-09-17.md"
+    report = "/mnt/qnap/timeseries/reports/causality/causality_report_2026-09-17.md"
     if not os.path.exists(report):
         print("  SKIP: Report not found (local test)")
         return
@@ -208,7 +208,7 @@ def test_dry_run_real_report():
 # -----------------------------------------------------------------------
 def test_idempotent_dry_run():
     print("\nTest 8: Idempotent dry run")
-    report = "/home/trading/trading-ai/reports/causality/causality_report_2026-09-17.md"
+    report = "/mnt/qnap/timeseries/reports/causality/causality_report_2026-09-17.md"
     if not os.path.exists(report):
         print("  SKIP: Report not found (local test)")
         return
@@ -377,7 +377,7 @@ def test_fetch_remote_report():
         if "ls" in shell_cmd and "tail" in shell_cmd:
             return mock.Mock(
                 returncode=0,
-                stdout="/home/trading/trading-ai/reports/causality/causality_report_2026-09-17.md\n",
+                stdout="/mnt/qnap/timeseries/reports/causality/causality_report_2026-09-17.md\n",
                 stderr="",
             )
         # CAT command — return report content

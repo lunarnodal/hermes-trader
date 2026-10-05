@@ -53,7 +53,7 @@ from typing import Any
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("ingest_cards")
 
-DEFAULT_REPORT_DIR = "/home/trading/trading-ai/reports/causality"
+DEFAULT_REPORT_DIR = "/mnt/qnap/timeseries/reports/causality"
 MANIFEST_PATH = os.path.join(DEFAULT_REPORT_DIR, "kanban_manifest.json")
 REMOTE_MANIFEST_DIR = "/home/sam/.hermes/cron/causality"
 REMOTE_MANIFEST_PATH = os.path.join(REMOTE_MANIFEST_DIR, "kanban_manifest.json")

@@ -9,7 +9,7 @@ import json, os, time, sqlite3, urllib.request, urllib.parse, datetime as dt
 from collections import defaultdict
 
 DB = "/home/trading/trading-ai/data/paper_trading.db"
-OUT = "/home/trading/trading-ai/reports/research"
+OUT = "/mnt/qnap/timeseries/reports/research"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) research/1.0"}
 TIER = 0.2
 
