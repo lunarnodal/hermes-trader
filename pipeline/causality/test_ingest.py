@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -31,8 +32,11 @@ from ingest_cards import (
     is_calibration_card,
     get_sector_ltft,
     _check_ranking_claim_date,
+    extract_theme,
+    find_refire_match,
     CANONICAL_SECTORS,
     DEFAULT_REPORT_DIR,
+    REFIRE_WINDOW_DAYS,
 )
 
 PASS = 0
@@ -843,11 +847,455 @@ def main():
     test_ranking_claim_no_date_logged()
     test_is_calibration_card_detection()
     test_get_sector_ltft()
+    test_extract_theme()
+    test_refire_within_window_suppress()
+    test_refire_different_direction_creates()
+    test_refire_no_direction_matches_either()
+    test_refire_older_than_window_creates()
+    test_refire_no_sector_never_suppresses()
+    test_refire_card_exists_refired_ids()
+    test_refire_dry_run_no_mutation()
+    test_refire_old_manifest_compat()
 
     print("\n" + "=" * 60)
     print(f"Results: {PASS} passed, {FAIL} failed")
     print("=" * 60)
     sys.exit(1 if FAIL > 0 else 0)
+
+
+# -----------------------------------------------------------------------
+# Test 24: extract_theme
+# -----------------------------------------------------------------------
+def test_extract_theme():
+    print("\nTest 24: extract_theme")
+
+    # Bullish financials
+    card = {"card_id": "t1", "title": "Bullish financials outlook",
+            "evidence": "", "expected_impact": ""}
+    sector, direction = extract_theme(card)
+    check("Sector is financials", sector == "financials", f"sector={sector}")
+    check("Direction is bullish", direction == "bullish", f"direction={direction}")
+
+    # Bearish technology
+    card2 = {"card_id": "t2", "title": "Bearish on technology",
+             "evidence": "", "expected_impact": ""}
+    sector2, direction2 = extract_theme(card2)
+    check("Sector is technology", sector2 == "technology", f"sector={sector2}")
+    check("Direction is bearish", direction2 == "bearish", f"direction={direction2}")
+
+    # No direction
+    card3 = {"card_id": "t3", "title": "Fix energy sector pipeline",
+             "evidence": "", "expected_impact": ""}
+    sector3, direction3 = extract_theme(card3)
+    check("Sector is energy", sector3 == "energy", f"sector={sector3}")
+    check("Direction is None", direction3 is None, f"direction={direction3}")
+
+    # No canonical sector -> fail-open
+    card4 = {"card_id": "t4", "title": "Fix something random",
+             "evidence": "", "expected_impact": ""}
+    sector4, direction4 = extract_theme(card4)
+    check("Sector is None", sector4 is None, f"sector={sector4}")
+    check("Direction is None", direction4 is None, f"direction={direction4}")
+
+    # Direction from evidence
+    card5 = {"card_id": "t5", "title": "Update macro model",
+             "evidence": "bearish reversal detected", "expected_impact": ""}
+    sector5, direction5 = extract_theme(card5)
+    check("Sector is macro", sector5 == "macro", f"sector={sector5}")
+    check("Direction is bearish", direction5 == "bearish", f"direction={direction5}")
+
+
+# -----------------------------------------------------------------------
+# Test 25: Re-fire within 14 days — same sector+direction suppresses
+# -----------------------------------------------------------------------
+def test_refire_within_window_suppress():
+    print("\nTest 25: Re-fire within 14 days — suppresses and stamps")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `fin-bullish-refire` — **Bullish financials finding** (Risk: low | Sectors: financials | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "fin-bullish-orig",
+                    "title": "Bullish financials finding",
+                    "sectors": ["financials"],
+                    "theme_sector": "financials",
+                    "theme_direction": "bullish",
+                    "created_at": (now - timedelta(days=5)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            return mock.Mock(returncode=0, stdout="Created task t_refire001\n")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Created 0 (suppressed)", result["created"] == 0, f"created={result['created']}")
+        check("Refired 1", result["refired"] == 1, f"refired={result['refired']}")
+        check("Skipped 0", result["skipped"] == 0, f"skipped={result['skipped']}")
+
+        m = load_manifest(manifest)
+        entry = m["cards"][0]
+        check("last_refired_at stamped", "last_refired_at" in entry)
+        check("refired_count is 1", entry["refired_count"] == 1)
+        check("refired_card_ids contains new card_id", "fin-bullish-refire" in entry["refired_card_ids"])
+        check("No kanban create called", len([c for c in call_log if "create" in str(c)]) == 0)
+
+
+# -----------------------------------------------------------------------
+# Test 26: Same sector, different direction — creates new card
+# -----------------------------------------------------------------------
+def test_refire_different_direction_creates():
+    print("\nTest 26: Same sector, different direction — creates new card")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `fin-bearish-new` — **Bearish financials finding** (Risk: low | Sectors: financials | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "fin-bullish-orig",
+                    "title": "Bullish financials finding",
+                    "sectors": ["financials"],
+                    "theme_sector": "financials",
+                    "theme_direction": "bullish",
+                    "created_at": (now - timedelta(days=3)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            if "kanban" in str(cmd) and "create" in str(cmd):
+                return mock.Mock(returncode=0, stdout="Created task t_refire002\n")
+            if "kanban" in str(cmd) and "reclaim" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            if "kanban" in str(cmd) and "block" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Created 1 (different direction)", result["created"] == 1, f"created={result['created']}")
+        check("Refired 0", result["refired"] == 0, f"refired={result['refired']}")
+
+
+# -----------------------------------------------------------------------
+# Test 27: No-direction card — suppresses matching entries
+# -----------------------------------------------------------------------
+def test_refire_no_direction_matches_either():
+    print("\nTest 27: No-direction card suppresses entries with any direction")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `fin-neutral-fix` — **Fix financials pipeline** (Risk: low | Sectors: financials | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "fin-bearish-orig",
+                    "title": "Bearish financials finding",
+                    "sectors": ["financials"],
+                    "theme_sector": "financials",
+                    "theme_direction": "bearish",
+                    "created_at": (now - timedelta(days=4)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            return mock.Mock(returncode=0, stdout="Created task t_refire003\n")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Created 0 (no-dir suppresses any-dir)", result["created"] == 0, f"created={result['created']}")
+        check("Refired 1", result["refired"] == 1, f"refired={result['refired']}")
+
+        m = load_manifest(manifest)
+        entry = m["cards"][0]
+        check("Stamped refired_card_ids", "fin-neutral-fix" in entry.get("refired_card_ids", []))
+
+
+# -----------------------------------------------------------------------
+# Test 28: Older than 14 days — creates new card
+# -----------------------------------------------------------------------
+def test_refire_older_than_window_creates():
+    print("\nTest 28: Older than 14 days — creates new card")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `fin-bullish-refire-old` — **Bullish financials finding** (Risk: low | Sectors: financials | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "fin-bullish-old",
+                    "title": "Bullish financials finding",
+                    "sectors": ["financials"],
+                    "theme_sector": "financials",
+                    "theme_direction": "bullish",
+                    "created_at": (now - timedelta(days=20)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            if "kanban" in str(cmd) and "create" in str(cmd):
+                return mock.Mock(returncode=0, stdout="Created task t_refire004\n")
+            if "kanban" in str(cmd) and "reclaim" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            if "kanban" in str(cmd) and "block" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Created 1 (outside window)", result["created"] == 1, f"created={result['created']}")
+        check("Refired 0", result["refired"] == 0, f"refired={result['refired']}")
+
+
+# -----------------------------------------------------------------------
+# Test 29: No canonical sector — never suppresses
+# -----------------------------------------------------------------------
+def test_refire_no_sector_never_suppresses():
+    print("\nTest 29: No canonical sector — never suppresses")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `generic-fix-thing` — **Fix something in the pipeline** (Risk: low | Sectors: infrastructure | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "generic-orig",
+                    "title": "Fix something else",
+                    "sectors": ["infrastructure"],
+                    "theme_sector": None,
+                    "theme_direction": None,
+                    "created_at": (now - timedelta(days=2)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            if "kanban" in str(cmd) and "create" in str(cmd):
+                return mock.Mock(returncode=0, stdout="Created task t_refire005\n")
+            if "kanban" in str(cmd) and "reclaim" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            if "kanban" in str(cmd) and "block" in str(cmd):
+                return mock.Mock(returncode=0, stdout="OK\n", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=False,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Created 1 (no sector match)", result["created"] == 1, f"created={result['created']}")
+        check("Refired 0", result["refired"] == 0, f"refired={result['refired']}")
+
+
+# -----------------------------------------------------------------------
+# Test 30: card_exists hits refired_card_ids
+# -----------------------------------------------------------------------
+def test_refire_card_exists_refired_ids():
+    print("\nTest 30: card_exists hits refired_card_ids")
+
+    manifest = {
+        "cards": [
+            {
+                "card_id": "original-card",
+                "title": "Original",
+                "refired_card_ids": ["refired-a", "refired-b"],
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        ],
+        "last_scan": "2026-01-01",
+    }
+
+    check("Finds original by card_id", card_exists(manifest, "original-card"))
+    check("Finds refired-a in refired_card_ids", card_exists(manifest, "refired-a"))
+    check("Finds refired-b in refired_card_ids", card_exists(manifest, "refired-b"))
+    check("Does not find unrelated id", not card_exists(manifest, "unrelated-id"))
+
+
+# -----------------------------------------------------------------------
+# Test 31: dry_run does not mutate manifest on re-fire
+# -----------------------------------------------------------------------
+def test_refire_dry_run_no_mutation():
+    print("\nTest 31: dry_run does not mutate manifest on re-fire")
+
+    now = datetime.now(timezone.utc)
+    report_text = """
+## Kanban Cards to Create
+1. `fin-bullish-dry` — **Bullish financials finding** (Risk: low | Sectors: financials | Owner: orchestrator)
+"""
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        pre = {
+            "cards": [
+                {
+                    "card_id": "fin-bullish-orig",
+                    "title": "Bullish financials finding",
+                    "sectors": ["financials"],
+                    "theme_sector": "financials",
+                    "theme_direction": "bullish",
+                    "created_at": (now - timedelta(days=5)).isoformat(),
+                }
+            ],
+            "last_scan": now.isoformat(),
+        }
+        save_manifest(pre, manifest)
+
+        pre_hash = json.dumps(pre["cards"], sort_keys=True)
+
+        call_log = []
+        def fake_run(cmd, **kwargs):
+            call_log.append(cmd)
+            return mock.Mock(returncode=0, stdout="Created task t_refire006\n")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            result = ingest_report(
+                report_path="",
+                manifest_path=manifest,
+                dry_run=True,
+                report_text=report_text,
+                report_file="test.md",
+            )
+
+        check("Refired 1 (dry run)", result["refired"] == 1, f"refired={result['refired']}")
+        check("Created 0", result["created"] == 0, f"created={result['created']}")
+
+        m_after = load_manifest(manifest)
+        post_hash = json.dumps(m_after["cards"], sort_keys=True)
+        check("Manifest unchanged", pre_hash == post_hash, "manifest was mutated in dry run")
+        entry = m_after["cards"][0]
+        check("No last_refired_at added", "last_refired_at" not in entry)
+        check("No refired_count added", "refired_count" not in entry)
+
+
+# -----------------------------------------------------------------------
+# Test 32: Old manifest entries load/save unchanged
+# -----------------------------------------------------------------------
+def test_refire_old_manifest_compat():
+    print("\nTest 32: Old manifest entries load/save unchanged")
+
+    with tempfile.TemporaryDirectory() as td:
+        manifest = os.path.join(td, "manifest.json")
+        # Old manifest without theme_sector, theme_direction, refired fields
+        pre = {
+            "cards": [
+                {
+                    "card_id": "old-card-1",
+                    "title": "Old card without theme fields",
+                    "sectors": ["financials"],
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "card_id": "old-card-2",
+                    "title": "Another old card",
+                    "sectors": ["technology"],
+                    "created_at": "2026-02-01T00:00:00+00:00",
+                },
+            ],
+            "last_scan": "2026-03-01",
+        }
+        save_manifest(pre, manifest)
+
+        # Reload — should not crash, should preserve old fields
+        m = load_manifest(manifest)
+        check("Has 2 old entries", len(m["cards"]) == 2)
+        check("Old card 1 fields intact", m["cards"][0]["card_id"] == "old-card-1")
+        check("No theme_sector added", "theme_sector" not in m["cards"][0])
+        check("No theme_direction added", "theme_direction" not in m["cards"][0])
+
+        # Save and reload again
+        save_manifest(m, manifest)
+        m2 = load_manifest(manifest)
+        check("Still 2 entries after save/reload", len(m2["cards"]) == 2)
+        check("Old fields preserved", m2["cards"][0]["card_id"] == "old-card-1")
+
+        # find_refire_match should derive sector from stored sectors/title
+        match = find_refire_match(m2, "financials", None)
+        check("find_refire_match derives sector from old entry", match is not None)
+        if match:
+            check("Matched old-card-1", match["card_id"] == "old-card-1")
 
 
 if __name__ == "__main__":

@@ -72,6 +72,118 @@ CANONICAL_SECTORS = [
     "defense",
 ]
 
+# Re-fire suppression window (days)
+REFIRE_WINDOW_DAYS = 14
+
+# ---------------------------------------------------------------------------
+# Re-fire gate: 14-day theme-sector + direction dedup
+# ---------------------------------------------------------------------------
+
+
+def extract_theme(card: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return (canonical_sector, direction) for a card.
+
+    direction is 'bullish', 'bearish', or None (unknown/neutral).
+    sector is None when no canonical sector token is found (fail-open).
+
+    When sector is None the caller should treat the card as
+    non-suppressible -- there is no theme to match against.
+    """
+    title = card.get("title", "")
+    body = ""
+    if card.get("evidence"):
+        body += f" {card['evidence']}"
+    if card.get("expected_impact"):
+        body += f" {card['expected_impact']}"
+    combined = f"{title} {body}"
+    combined_lower = combined.lower()
+
+    # Derive direction
+    direction: str | None = None
+    if "bullish" in combined_lower:
+        direction = "bullish"
+    elif "bearish" in combined_lower:
+        direction = "bearish"
+
+    # Derive canonical sector (longest-first for accuracy)
+    sector: str | None = None
+    for s in CANONICAL_SECTORS:
+        pat = r"(?i)(?:^|[^a-zA-Z0-9_])" + re.escape(s) + r"(?:$|[^a-zA-Z0-9_])"
+        if re.search(pat, combined):
+            sector = s
+            break
+
+    return (sector, direction)
+
+
+def find_refire_match(
+    manifest: dict, sector: str, direction: str | None
+) -> dict | None:
+    """Find a manifest entry matching sector+direction within REFIRE_WINDOW_DAYS.
+
+    An entry matches when:
+      - It has theme_sector == sector (or sector is derivable from stored
+        title/sectors when theme_sector is absent).
+      - It is not skipped.
+      - Its theme_direction matches the query direction, OR either side is
+        None (direction None means 'either direction').
+      - Its last_refired_at (or created_at as fallback) is within
+        REFIRE_WINDOW_DAYS of now.
+
+    Returns the matching entry dict or None.
+    """
+    now = datetime.now(timezone.utc)
+    window = REFIRE_WINDOW_DAYS
+
+    for entry in manifest.get("cards", []):
+        if entry.get("skipped"):
+            continue
+
+        # Resolve entry's sector
+        entry_sector = entry.get("theme_sector")
+        if entry_sector is None:
+            # Derive from stored sectors list or title
+            for s in CANONICAL_SECTORS:
+                for ts in entry.get("sectors", []):
+                    if s in ts.lower():
+                        entry_sector = s
+                        break
+                if entry_sector:
+                    break
+            if not entry_sector:
+                title_lower = (entry.get("title", "") or "").lower()
+                for s in CANONICAL_SECTORS:
+                    if s in title_lower:
+                        entry_sector = s
+                        break
+
+        if entry_sector != sector:
+            continue
+
+        # Resolve entry's direction
+        entry_dir = entry.get("theme_direction")
+
+        # Direction match: exact match, or either side is None
+        if direction is not None and entry_dir is not None:
+            if direction != entry_dir:
+                continue
+
+        # Timestamp check -- prefer last_refired_at, fall back to created_at
+        ts_str = entry.get("last_refired_at") or entry.get("created_at")
+        if ts_str is None:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except (ValueError, TypeError):
+            continue
+        if (now - ts).days > window:
+            continue
+
+        return entry
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Calibration-card detection & sector-trim gate
 # ---------------------------------------------------------------------------
@@ -354,8 +466,13 @@ def save_manifest(manifest: dict, path: str) -> None:
 
 
 def card_exists(manifest: dict, card_id: str) -> bool:
-    """Check if card_id already in manifest."""
-    return any(c.get("card_id") == card_id for c in manifest.get("cards", []))
+    """Check if card_id already in manifest or in any entry's refired_card_ids."""
+    for entry in manifest.get("cards", []):
+        if entry.get("card_id") == card_id:
+            return True
+        if card_id in entry.get("refired_card_ids", []):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +630,7 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
     (used by --remote mode).
     The ``host`` kwarg is used for the sector-trim LTFT lookup; defaults
     to the airig box.
-    Returns summary: {created: N, skipped: N, errors: N, ungated: N}
+    Returns summary: {created: N, skipped: N, errors: N, ungated: N, refired: N}
     """
     manifest_path = os.path.expanduser(manifest_path)
 
@@ -521,7 +638,7 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
         report_path = os.path.expanduser(report_path)
         if not os.path.exists(report_path):
             log.error("Report not found: %s", report_path)
-            return {"created": 0, "skipped": 0, "errors": 1, "ungated": 0}
+            return {"created": 0, "skipped": 0, "errors": 1, "ungated": 0, "refired": 0}
         with open(report_path, "r") as f:
             text = f.read()
         if report_file is None:
@@ -532,7 +649,7 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
     cards = parse_cards_section(text)
     if not cards:
         log.info("No cards to ingest from %s", report_file)
-        return {"created": 0, "skipped": 0, "errors": 0, "ungated": 0}
+        return {"created": 0, "skipped": 0, "errors": 0, "ungated": 0, "refired": 0}
 
     manifest = load_manifest(manifest_path)
 
@@ -540,6 +657,7 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
     skipped = 0
     errors = 0
     ungated = 0
+    refired = 0
 
     for card in cards:
         card_id = card["card_id"]
@@ -549,6 +667,25 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
             log.info("Skipping %s — already in manifest.", card_id)
             skipped += 1
             continue
+
+        # --- Re-fire gate: 14-day theme-sector + direction window ---
+        card_sector, card_direction = extract_theme(card)
+        if card_sector is not None:
+            match = find_refire_match(manifest, card_sector, card_direction)
+            if match is not None:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                if dry_run:
+                    log.info("[DRY RUN] Would re-fire stamp: %s -> %s (count=%d)",
+                             card_id, match["card_id"],
+                             match.get("refired_count", 0) + 1)
+                else:
+                    match["last_refired_at"] = now_iso
+                    match["refired_count"] = match.get("refired_count", 0) + 1
+                    match.setdefault("refired_card_ids", []).append(card_id)
+                    log.info("Re-fire: %s stamped onto %s (count=%d)",
+                             card_id, match["card_id"], match["refired_count"])
+                refired += 1
+                continue
 
         # Ranking-claim date check (informational warning only)
         _check_ranking_claim_date(card)
@@ -589,7 +726,7 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
             if not gated:
                 ungated += 1
 
-            # Record in manifest
+            # Record in manifest — include theme_sector / theme_direction
             entry = {
                 "card_id": card_id,
                 "title": card["title"],
@@ -600,6 +737,8 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
                 "gated": gated,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "report_file": report_file,
+                "theme_sector": card_sector,
+                "theme_direction": card_direction,
             }
             manifest["cards"].append(entry)
         else:
@@ -614,9 +753,9 @@ def ingest_report(report_path: str, manifest_path: str = MANIFEST_PATH, dry_run:
         save_manifest(manifest, manifest_path)
         log.info("Manifest saved to %s", manifest_path)
 
-    log.info("Summary: created=%d skipped=%d errors=%d ungated=%d (dry_run=%s)",
-             created, skipped, errors, ungated, dry_run)
-    return {"created": created, "skipped": skipped, "errors": errors, "ungated": ungated}
+    log.info("Summary: created=%d skipped=%d errors=%d ungated=%d refired=%d (dry_run=%s)",
+             created, skipped, errors, ungated, refired, dry_run)
+    return {"created": created, "skipped": skipped, "errors": errors, "ungated": ungated, "refired": refired}
 
 
 def ingest_all(dry_run: bool = False) -> dict:
@@ -624,20 +763,21 @@ def ingest_all(dry_run: bool = False) -> dict:
     report_dir = DEFAULT_REPORT_DIR
     if not os.path.isdir(report_dir):
         log.error("Report dir not found: %s", report_dir)
-        return {"created": 0, "skipped": 0, "errors": 1, "ungated": 0}
+        return {"created": 0, "skipped": 0, "errors": 1, "ungated": 0, "refired": 0}
 
     reports = sorted(
         Path(report_dir).glob("causality_report_*.md"),
         key=lambda p: p.name,
     )
 
-    totals = {"created": 0, "skipped": 0, "errors": 0, "ungated": 0}
+    totals = {"created": 0, "skipped": 0, "errors": 0, "ungated": 0, "refired": 0}
     for rp in reports:
         r = ingest_report(str(rp), dry_run=dry_run)
         totals["created"] += r["created"]
         totals["skipped"] += r["skipped"]
         totals["errors"] += r["errors"]
         totals["ungated"] += r.get("ungated", 0)
+        totals["refired"] += r.get("refired", 0)
 
     log.info("All reports scanned. Totals: %s", totals)
     return totals
