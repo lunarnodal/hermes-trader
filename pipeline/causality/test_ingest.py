@@ -1259,22 +1259,23 @@ def test_refire_old_manifest_compat():
     with tempfile.TemporaryDirectory() as td:
         manifest = os.path.join(td, "manifest.json")
         # Old manifest without theme_sector, theme_direction, refired fields
+        _recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         pre = {
             "cards": [
                 {
                     "card_id": "old-card-1",
                     "title": "Old card without theme fields",
                     "sectors": ["financials"],
-                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "created_at": _recent,
                 },
                 {
                     "card_id": "old-card-2",
                     "title": "Another old card",
                     "sectors": ["technology"],
-                    "created_at": "2026-02-01T00:00:00+00:00",
+                    "created_at": _recent,
                 },
             ],
-            "last_scan": "2026-03-01",
+            "last_scan": _recent,
         }
         save_manifest(pre, manifest)
 
