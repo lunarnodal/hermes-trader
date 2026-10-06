@@ -77,15 +77,9 @@ def get_portfolio_data(since: datetime) -> dict:
         FROM positions WHERE status = 'open'
     """).fetchall()
 
-    # Cash flow
-    cash_now = conn.execute(
-        "SELECT SUM(amount) FROM cash_ledger"
-    ).fetchone()[0] or 0
-
-    total_now = conn.execute("""
-        SELECT SUM(shares * current_price) FROM positions WHERE status = 'open'
-    """).fetchone()[0] or 0
-
+    # Theta-aware portfolio value (includes open theta cash reservations)
+    from portfolio.db import get_portfolio_value as _gpv
+    portfolio_value = _gpv(conn)
     conn.close()
 
     wins   = [c for c in closed if (c[4] or 0) > 0]
@@ -127,10 +121,10 @@ def get_portfolio_data(since: datetime) -> dict:
         'sector_trades':    dict(sector_trades),
         'exit_reasons':     dict(exit_reasons),
         'open_positions':   len(open_pos),
-        'portfolio_value':  round(cash_now + total_now, 2),
+        'portfolio_value':  round(portfolio_value, 2),
         'snapshots':        len(snaps),
         'start_value':      snaps[0][1] if snaps else 50000,
-        'end_value':        snaps[-1][1] if snaps else cash_now + total_now,
+        'end_value':        snaps[-1][1] if snaps else portfolio_value,
     }
 
 
@@ -257,7 +251,7 @@ REPORT_PROMPT = """You are analyzing the performance of an autonomous AI trading
 Write a {period_name} performance report based on the data below.
 
 The system trades US stocks and ETFs using news sentiment analysis.
-Starting capital: $50,000. Philosophy: Boglehead-inspired, disciplined profit taking.
+Starting capital: ${portfolio[start_value]:,.2f}. Philosophy: Boglehead-inspired, disciplined profit taking.
 
 === PORTFOLIO PERFORMANCE ===
 {portfolio_summary}
@@ -340,6 +334,7 @@ Key dependencies found: {json.dumps([f"{d['from']} → {d['to']} ({d['times']}x)
                     "role":    "user",
                     "content": REPORT_PROMPT.format(
                         period_name=period_name,
+                        portfolio=portfolio,
                         portfolio_summary=portfolio_summary,
                         prediction_summary=prediction_summary,
                         learning_summary=learning_summary
