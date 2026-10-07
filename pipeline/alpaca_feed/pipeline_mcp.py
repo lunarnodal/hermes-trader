@@ -22,6 +22,7 @@ import os
 import logging
 import sys
 import threading
+import hashlib
 from functools import wraps
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -39,7 +40,7 @@ from alpaca_feed.data import get_live_prices
 
 log = logging.getLogger(__name__)
 
-mcp = FastMCP("Trading Pipeline", host="0.0.0.0", port=8101)
+mcp = FastMCP("Trading Pipeline", host="127.0.0.1", port=8101)
 
 from config import PAPER_DB, PORTFOLIO_DB, RULES_DB, LESSONS_DB, TRADING_DB as INSTRUMENT_DB
 
@@ -49,6 +50,9 @@ from config import PAPER_DB, PORTFOLIO_DB, RULES_DB, LESSONS_DB, TRADING_DB as I
 # ---------------------------------------------------------------------------
 # MCP Call Tracking — append-only log, non-blocking background thread
 # ---------------------------------------------------------------------------
+
+# SDLC-3: execute_trade disabled until SAM D-3 auth design
+_TOOL_DISABLED = True
 
 _CALL_LOG_LOCK = threading.Lock()
 _INIT_DONE = False
@@ -667,10 +671,12 @@ def validate_trade(ticker: str, shares: float, side: str = "buy") -> str:
 def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
     """
     Execute a trade through the portfolio management system.
-    Runs all gates via validate_trade first — only places order if ALL gates pass.
-    This is the ONLY correct way to place orders through Hermes.
+    Routes through the same path as manager.py: intent journaling,
+    deterministic client_order_id, and DB position/transaction record.
+    DISABLED pending SAM D-3 auth design — returns info but does NOT
+    call the broker.
     """
-    # Step 1: Run validation
+    # Step 1: Run validation (gate check still works for diagnostics)
     validation = json.loads(validate_trade(ticker, shares, side))
 
     if not validation['approved']:
@@ -686,30 +692,124 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
             "action":      "No order placed. Address the failed gates before retrying."
         }, indent=2)
 
-    # Step 2: All gates passed — place the order
+    # Step 2: All gates passed — route through manager.py path
+    #         (intent journaling + deterministic client_order_id + DB record)
     try:
-        result = place_market_order(
-            ticker, shares, side,
-            reason=f"Hermes-initiated {side} — all gates passed"
-        )
+        now = datetime.now(timezone.utc)
+        payload = f"{ticker}:{side.upper()}:{shares}:{now.isoformat()}"
+        h = hashlib.blake2s(payload.encode(), digest_size=8).hexdigest()
+        client_order_id = f"mcp-{ticker[:4].upper()}-{now.date().isoformat()}-{h}"
 
-        if result.get('success'):
+        action = side.upper()
+
+        # ── Intent journal (same as manager.py _alpaca_mirror) ──
+        conn = sqlite3.connect(PORTFOLIO_DB)
+        intent_id = None
+        try:
+            from portfolio.db import record_intent
+            intent_id = record_intent(
+                conn, account="mcp", action=action,
+                symbol=ticker, qty=shares, client_order_id=client_order_id
+            )
+        except Exception as _ie:
+            log.error(f"[INTENT] Failed to journal intent for {action} {ticker}: {_ie}")
+
+        # ── Sector lookup (shared with validate_trade) ──
+        sector_map = {
+            'XLK': 'technology', 'NVDA': 'technology', 'AAPL': 'technology',
+            'MSFT': 'technology', 'AMD': 'technology', 'INTC': 'technology',
+            'XLV': 'healthcare', 'UNH': 'healthcare', 'JNJ': 'healthcare',
+            'XLE': 'energy', 'XOM': 'energy', 'CVX': 'energy',
+            'XLF': 'financials', 'JPM': 'financials', 'BAC': 'financials',
+            'XLB': 'materials', 'XLI': 'industrials', 'XLP': 'consumer',
+            'ITA': 'defense', 'SPY': 'macro', 'QQQ': 'technology',
+            'AMZN': 'technology', 'CRM': 'technology', 'GOOGL': 'technology',
+            'META': 'technology', 'TSLA': 'technology',
+        }
+        sector = sector_map.get(ticker.upper(), 'unknown')
+
+        if _TOOL_DISABLED:
+            # SDLC-3: disabled pending SAM D-3 auth design
+            # Intent is journaled; position NOT opened; broker NOT called
+            conn.close()
             return json.dumps({
-                "status":       "EXECUTED",
-                "ticker":       ticker,
-                "shares":       shares,
-                "side":         side,
-                "order_id":     result.get('order_id'),
-                "alpaca_status": result.get('status'),
-                "gates_passed": validation['summary'],
-                "message":      "Order placed successfully via Alpaca paper account"
+                "status":          "DISABLED",
+                "ticker":          ticker,
+                "shares":          shares,
+                "side":            side,
+                "sector":          sector,
+                "client_order_id": client_order_id,
+                "intent_id":       intent_id,
+                "gates_passed":    validation['summary'],
+                "message":         "Tool disabled pending SAM D-3 auth design. "
+                                   "Intent journaled, position NOT created, broker NOT called."
+            }, indent=2)
+
+        # ── Open DB position (same as manager.py open_position) ──
+        prices = get_live_prices([ticker])
+        price = prices.get(ticker)
+        if price is None:
+            conn.close()
+            return json.dumps({
+                "status": "ERROR",
+                "ticker": ticker,
+                "error":  "Could not fetch live price"
+            }, indent=2)
+
+        pos_id = None
+        try:
+            from portfolio.db import open_position
+            pos_id = open_position(conn, ticker, sector, shares, price,
+                                   notes=f"MCP {side} — all gates passed")
+        except Exception as _oe:
+            log.error(f"Failed to open position for {ticker}: {_oe}")
+
+        # ── Place broker order (same as manager.py _alpaca_mirror) ──
+        result = None
+        try:
+            from alpaca_feed.trading import place_market_order
+            result = place_market_order(
+                ticker, shares, side,
+                reason=f"Hermes MCP {side} — all gates passed",
+                client_order_id=client_order_id
+            )
+        except Exception as _be:
+            log.warning(f"Alpaca mirror failed for {ticker}: {_be}")
+
+        # ── Update intent state ──
+        if intent_id is not None:
+            try:
+                from portfolio.db import update_intent_state
+                if result and result.get("success"):
+                    update_intent_state(conn, intent_id, state="submitted",
+                                        broker_order_id=result.get("order_id"))
+                else:
+                    update_intent_state(conn, intent_id, state="failed")
+            except Exception as _ue:
+                log.warning(f"Failed to update intent state: {_ue}")
+
+        conn.commit()
+        conn.close()
+
+        if result and result.get("success"):
+            return json.dumps({
+                "status":          "EXECUTED",
+                "ticker":          ticker,
+                "shares":          shares,
+                "side":            side,
+                "pos_id":          pos_id,
+                "order_id":        result.get("order_id"),
+                "client_order_id": client_order_id,
+                "gates_passed":    validation['summary'],
+                "message":         "Order placed via Alpaca — intent + position recorded"
             }, indent=2)
         else:
             return json.dumps({
-                "status":  "FAILED",
-                "ticker":  ticker,
-                "error":   result.get('error'),
-                "message": "All gates passed but Alpaca order failed"
+                "status":          "FAILED",
+                "ticker":          ticker,
+                "error":           result.get("error") if result else "broker call failed",
+                "client_order_id": client_order_id,
+                "message":         "Gates passed but broker order failed"
             }, indent=2)
 
     except Exception as e:
@@ -718,7 +818,6 @@ def execute_trade(ticker: str, shares: float, side: str = "buy") -> str:
             "ticker": ticker,
             "error":  str(e)
         }, indent=2)
-
 
 
 @instrumented_tool()
@@ -1305,5 +1404,5 @@ def get_theta_positions() -> str:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
-    log.info("Starting Trading Pipeline MCP on 0.0.0.0:8101")
+    log.info("Starting Trading Pipeline MCP on 127.0.0.1:8101")
     mcp.run(transport="streamable-http")
