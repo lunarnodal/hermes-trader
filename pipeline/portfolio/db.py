@@ -856,7 +856,8 @@ def cancel_expired_theta_positions(conn) -> int:
 
         # Get open theta positions that haven't been confirmed filled
         rows = conn.execute("""
-            SELECT id, ticker, strike, option_symbol, premium_collected
+            SELECT id, ticker, strike, option_symbol, premium_collected,
+                   instrument_type, sector, expiry
             FROM theta_positions
             WHERE status = 'open'
             AND notes NOT LIKE '%confirmed_fill%'
@@ -880,7 +881,7 @@ def cancel_expired_theta_positions(conn) -> int:
         cancelled = 0
         now = datetime.now(timezone.utc).isoformat()
 
-        for pos_id, ticker, strike, option_symbol, premium in rows:
+        for pos_id, ticker, strike, option_symbol, premium, instrument_type, sector, expiry in rows:
             if not option_symbol:
                 continue
 
