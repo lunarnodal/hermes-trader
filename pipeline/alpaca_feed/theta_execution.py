@@ -359,13 +359,17 @@ def check_theta_closing_fills(conn) -> list[dict]:
                 )
 
                 # Release reserved cash now that close is confirmed
+                # Match by option_symbol, not ticker — prevents releasing
+                # another position's reservation when two CSPs for the same
+                # ticker exist (e.g., two sequential XLK puts).
                 reserved = conn.execute("""
                     SELECT COUNT(*) FROM cash_ledger
                     WHERE description LIKE ? AND amount < 0
-                """, (f'%THETA RESERVE%{ticker}%',)).fetchone()[0]
+                """, (f'%THETA RESERVE%{option_symbol}%',)).fetchone()[0]
                 if reserved > 0:
                     release_cash_for_put(
                         conn, ticker, strike,
+                        option_symbol=option_symbol,
                         premium_collected=premium_collected,
                         notes=f"confirmed close: {assignment_event}"
                     )

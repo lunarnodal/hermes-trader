@@ -917,6 +917,7 @@ def reserve_cash_for_put(conn, ticker: str, strike: float,
 
 
 def release_cash_for_put(conn, ticker: str, strike: float,
+                          option_symbol: str = "",
                           premium_collected: float = 0,
                           notes: str = "") -> None:
     """
@@ -934,7 +935,7 @@ def release_cash_for_put(conn, ticker: str, strike: float,
         INSERT INTO cash_ledger (timestamp, amount, balance, description)
         VALUES (?, ?, ?, ?)
     """, (now, reserved, new_balance,
-          f"THETA RELEASE: CSP {ticker} strike=${strike:.2f} {notes}"))
+          f"THETA RELEASE: CSP {ticker} strike=${strike:.2f} {option_symbol} {notes}"))
     conn.commit()
     log.info(f"[THETA] Cash released: ${reserved:.2f} for {ticker} CSP "
              f"(balance ${current_balance:.2f} → ${new_balance:.2f})")
@@ -1065,6 +1066,7 @@ def cancel_expired_theta_positions(conn) -> int:
                               now, f"assigned {eq_qty:.0f} shares @ ${avg_cost:.2f}"))
                         # Release reserved cash (it was spent on shares)
                         release_cash_for_put(conn, ticker, strike,
+                                             option_symbol=option_symbol,
                                              notes="assignment — cash spent on shares")
                         # Create equity position in portfolio DB
                         cost_basis = round(avg_cost * eq_qty, 2)
