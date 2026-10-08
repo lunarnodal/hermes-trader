@@ -725,6 +725,111 @@ def open_theta_position(conn: sqlite3.Connection,
     return position_id
 
 
+def transition_theta_closing(conn: sqlite3.Connection,
+                             position_id: int,
+                             assignment_event: str,
+                             btc_order_id: str,
+                             expected_fill_price: float,
+                             notes: str = "") -> dict:
+    """
+    Transition a theta position from 'open' to 'closing' after BTC order placed.
+    The position stays in 'closing' until the fill is confirmed.
+    """
+    pos = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike,
+               premium_collected, entry_date
+        FROM theta_positions WHERE id = ? AND status = 'open'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Theta position #{position_id} not found or not open")
+        return {}
+
+    pos_id, ticker, sector, instrument_type, strike, premium, entry_date = pos
+    now = datetime.now(timezone.utc).isoformat()
+
+    conn.execute("""
+        UPDATE theta_positions
+        SET status = 'closing',
+            assignment_event = ?,
+            exit_price = ?,
+            notes = notes || ' | closing: order=' || ? || ' expected=' || ? || ' ' || ?
+        WHERE id = ?
+    """, (assignment_event, expected_fill_price,
+          btc_order_id, f"{expected_fill_price:.2f}", notes, position_id))
+
+    conn.commit()
+    log.info(f"THETA CLOSING: {ticker} pos_id={position_id} "
+             f"order={btc_order_id} expected_fill=${expected_fill_price:.2f}")
+
+    return {
+        "ticker": ticker,
+        "pos_id": position_id,
+        "btc_order_id": btc_order_id,
+        "expected_fill_price": expected_fill_price,
+    }
+
+
+def confirm_theta_close(conn: sqlite3.Connection,
+                        position_id: int,
+                        actual_fill_price: float,
+                        notes: str = "") -> dict:
+    """
+    Confirm a theta position close after BTC fill is verified.
+    Transitions from 'closing' to 'closed' with the actual fill price.
+    """
+    pos = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike,
+               premium_collected, entry_date, assignment_event
+        FROM theta_positions WHERE id = ? AND status = 'closing'
+    """, (position_id,)).fetchone()
+
+    if not pos:
+        log.error(f"Theta position #{position_id} not found or not in closing state")
+        return {}
+
+    pos_id, ticker, sector, instrument_type, strike, premium, entry_date, assignment_event = pos
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Calculate P&L — each contract = 100 shares
+    pnl = (premium - abs(actual_fill_price)) * 100
+    pnl_pct = (pnl / (premium * 100) * 100) if premium else 0.0
+
+    conn.execute("""
+        UPDATE theta_positions
+        SET status = 'closed', exit_date = ?,
+            exit_price = ?, pnl = ?, pnl_pct = ?,
+            notes = notes || ' | confirmed_fill=' || ?
+        WHERE id = ?
+    """, (now, actual_fill_price, round(pnl, 2), round(pnl_pct, 2),
+          f"{actual_fill_price:.2f}", position_id))
+
+    # Record assignment event
+    conn.execute("""
+        INSERT INTO theta_assignment_events
+        (sector, ticker, event_date, event_type, theta_position_id)
+        VALUES (?, ?, ?, ?, ?)
+    """, (sector, ticker, now, assignment_event, position_id))
+
+    _increment_sector_assignment_count(conn, sector)
+    conn.commit()
+
+    log.info(f"THETA CONFIRMED CLOSE: {ticker} fill=${actual_fill_price:.2f} "
+             f"P&L=${pnl:+.2f} ({pnl_pct:+.1f}%)")
+
+    return {
+        "ticker":          ticker,
+        "sector":          sector,
+        "instrument_type": instrument_type,
+        "strike":          strike,
+        "premium":         premium,
+        "assignment_event": assignment_event,
+        "actual_fill_price": actual_fill_price,
+        "pnl":             round(pnl, 2),
+        "pnl_pct":         round(pnl_pct, 2),
+    }
+
+
 def close_theta_position(conn: sqlite3.Connection,
                          position_id: int,
                          assignment_event: str,
@@ -744,12 +849,12 @@ def close_theta_position(conn: sqlite3.Connection,
     pos_id, ticker, sector, instrument_type, strike, premium, entry_date = pos
     now = datetime.now(timezone.utc).isoformat()
 
-    # Calculate P&L
-    pnl = premium
+    # Calculate P&L — each contract = 100 shares, multiply by 100
+    pnl = premium * 100
     if exit_price is not None:
         # For early close: exit_price is the price paid to buy back the option
-        pnl = premium - abs(exit_price)
-    pnl_pct = (pnl / premium * 100) if premium else 0.0
+        pnl = (premium - abs(exit_price)) * 100
+    pnl_pct = (pnl / (premium * 100) * 100) if premium else 0.0
 
     new_status = "assigned" if assignment_event == "exercised" else "closed"
 
