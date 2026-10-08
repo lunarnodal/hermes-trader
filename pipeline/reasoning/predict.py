@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from config import PAPER_DB
 from tickers.taxonomy import sectors_for_query, normalize_sectors
 
 SPARK_LLAMA   = os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083")
@@ -312,8 +313,9 @@ def run_prediction(query: str, timeframe: str = "24h",
     track_record_context = ""
     try:
         import sqlite3 as _sql
-        _db = Path(__file__).parent.parent / "data" / "paper_trading.db"
-        _conn = _sql.connect(_db)
+        if not PAPER_DB.exists() or PAPER_DB.stat().st_size == 0:
+            log.warning(f"PAPER_DB missing or empty: {PAPER_DB}")
+        _conn = _sql.connect(str(PAPER_DB))
         _sector_hint = query.split("—")[0].strip()[:25]
         _rows = _conn.execute("""
             SELECT direction, actual_direction, was_correct
@@ -345,7 +347,7 @@ PREDICTION TRACK RECORD (last {_total} verified predictions for this sector):
   appear bullish. Financial news skews positive — do not let that bias you.
 """
     except Exception as _e:
-        log.debug(f"Could not load track record: {_e}")
+        log.warning(f"Could not load track record: {_e}")
 
     user_prompt = f"""Query: {query}
 Timeframe: {timeframe}

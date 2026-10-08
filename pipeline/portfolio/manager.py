@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from config import PAPER_DB
 from config_reader import get_config
 
 from portfolio.db import (
@@ -37,10 +38,12 @@ from portfolio.explain import (
 
 # Initialize explainability table on module load
 try:
-    _db_path = str(Path(__file__).parent.parent / data / paper_trading.db)
+    if not PAPER_DB.exists() or PAPER_DB.stat().st_size == 0:
+        logging.getLogger(__name__).warning(f"PAPER_DB missing or empty: {PAPER_DB}")
+    _db_path = str(PAPER_DB)
     init_explainability_db(_db_path)
-except Exception:
-    pass
+except Exception as _e:
+    logging.getLogger(__name__).warning(f"Explainability DB init failed: {_e}")
 
 import hashlib
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from config import PAPER_DB
 from reasoning.predict import run_prediction, save_and_record
 
 logging.basicConfig(
@@ -127,7 +128,9 @@ def run_daily_predictions() -> None:
 
     # Load repeating failure history once
     import sqlite3 as _sql
-    _db = Path(__file__).parent.parent / "data" / "paper_trading.db"
+    if not PAPER_DB.exists() or PAPER_DB.stat().st_size == 0:
+        log.warning(f"PAPER_DB missing or empty: {PAPER_DB}")
+    _db = str(PAPER_DB)
 
     def _check_repeating_failure(query: str, label: str) -> str | None:
         """Returns a warning string if this query has been wrong 3+ times recently."""
@@ -154,7 +157,8 @@ def run_daily_predictions() -> None:
                     f"Most common wrong direction: {most_common}. "
                     f"Apply extra skepticism — the model may be pattern-matching stale narratives."
                 )
-        except Exception:
+        except Exception as _e:
+            log.warning(f"Repeating failure check failed: {_e}")
             return None
         return None
 

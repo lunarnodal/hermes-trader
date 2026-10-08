@@ -19,8 +19,12 @@ Key functions:
 import os
 import logging
 import sqlite3
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from config import PAPER_DB
 
 log = logging.getLogger(__name__)
 
@@ -137,8 +141,9 @@ def semantic_win_rate(sector_query: str,
         ])
 
         # Predictions live in paper_trading.db, not portfolio.db
-        _paper_db = Path(__file__).parent.parent.parent / "data" / "paper_trading.db"
-        _pred_conn = sqlite3.connect(str(_paper_db))
+        if not PAPER_DB.exists() or PAPER_DB.stat().st_size == 0:
+            log.warning(f"PAPER_DB missing or empty: {PAPER_DB}")
+        _pred_conn = sqlite3.connect(str(PAPER_DB))
         try:
             row = _pred_conn.execute(f"""
                 SELECT COUNT(*) as total,
@@ -440,7 +445,7 @@ if __name__ == "__main__":
     print(f"\nSemantic win rate test (no DB — will show None):")
     import sqlite3 as _sql
     try:
-        db = Path(__file__).parent.parent / "data" / "paper_trading.db"
+        db = PAPER_DB
         conn = _sql.connect(str(db))
         wr = semantic_win_rate(query, conn)
         print(f"Win rate: {wr}")
