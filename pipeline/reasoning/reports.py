@@ -42,7 +42,13 @@ REPORTS_DIR = Path("/mnt/qnap/timeseries/reports")
 
 SPARK_HOST  = os.getenv("SPARK_LLAMA_HOST",
               os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083"))
-MODEL       = "deepseek-r1"
+MODEL       = "unknown"
+try:
+    _m = requests.get(f"{SPARK_HOST}/v1/models", timeout=5).json()
+    MODEL = _m["data"][0]["id"]
+    log.info(f"Resolved active model from endpoint: {MODEL}")
+except Exception:
+    log.warning(f"Could not resolve model from {SPARK_HOST}/v1/models, using {MODEL}")
 
 
 # ─── Data gathering ───────────────────────────────────────────────────────────

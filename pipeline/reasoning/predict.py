@@ -46,6 +46,17 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ─── Resolve actual model name from endpoint at startup ─────
+# Port 8083 serves whatever the operator loaded; don't guess.
+ACTIVE_MODEL = os.getenv("REASONING_MODEL", "unknown")
+try:
+    _m = requests.get(f"{SPARK_LLAMA}/v1/models", timeout=5).json()
+    ACTIVE_MODEL = _m["data"][0]["id"]
+    log.info(f"Resolved active model from endpoint: {ACTIVE_MODEL}")
+except Exception:
+    log.warning(f"Could not resolve model from {SPARK_LLAMA}/v1/models, using {ACTIVE_MODEL}")
+#
+
 try:
     from reasoning.calibration import calibrate_confidence
     CALIBRATION_ENABLED = True
@@ -470,6 +481,7 @@ Based on these signals, provide your reasoning and prediction."""
     return {
         "query":      query,
         "timeframe":  timeframe,
+        "model":      ACTIVE_MODEL,
         "signals_used": len(signals),
         "reasoning":  content,
         "thinking_chars": len(thinking),

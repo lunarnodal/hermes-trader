@@ -177,8 +177,8 @@ def get_signals_at_prediction_time(created_at: str,
     return signals[:30]  # limit to 30 most relevant
 
 
-def call_deepseek(prompt: str) -> dict | None:
-    """Call DeepSeek for post-mortem analysis"""
+def call_reasoning_model(prompt: str) -> dict | None:
+    """Call the reasoning model for post-mortem analysis"""
     try:
         resp = requests.post(
             f"{SPARK_HOST}/v1/chat/completions",
@@ -210,7 +210,7 @@ def call_deepseek(prompt: str) -> dict | None:
         return json.loads(content)
 
     except Exception as e:
-        log.error(f"DeepSeek post-mortem call failed: {e}")
+        log.error(f"Reasoning model post-mortem call failed: {e}")
         return None
 
 
@@ -350,8 +350,8 @@ def run_postmortem(prediction_id: int = None) -> int:
             signals_at_prediction=signals_text
         )
 
-        log.info(f"Calling DeepSeek for post-mortem analysis...")
-        result = call_deepseek(prompt)
+        log.info(f"Calling reasoning model for post-mortem analysis...")
+        result = call_reasoning_model(prompt)
 
         if not result:
             log.error(f"Post-mortem failed for prediction #{pred_id}")
