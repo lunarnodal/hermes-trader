@@ -6,7 +6,10 @@ Marks predictions as correct/wrong and updates rule performance
 Runs every 6 hours via cron
 """
 
+import json
 import logging
+import os
+import requests
 import sqlite3
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -20,8 +23,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from paper_trading.db import init_db, verify_prediction, snapshot_portfolio
 
-from alpaca_feed.data import get_daily_close
-
 log = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +33,8 @@ logging.basicConfig(
     ]
 )
 
+# Yahoo Finance unofficial API — free, no key needed
+YF_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
 
 TIMEFRAME_HOURS = {
     "24h": 24,
@@ -43,42 +46,67 @@ TIMEFRAME_HOURS = {
 from sector_etf import get_sector_etf
 
 
-def _rounding_threshold(hours_back: int) -> float:
-    """Return the rounding threshold for a given timeframe."""
-    if hours_back <= 24:
-        return 0.2
-    elif hours_back <= 48:
-        return 0.3
-    return 0.5
-
-
 def fetch_price_change(ticker: str, hours_back: int) -> dict | None:
-    """Fetch price change using Alpaca daily bars (close-to-close)."""
+    """Fetch price change over a time period using Yahoo Finance"""
     try:
-        now_utc = datetime.now(timezone.utc)
-        days_back = hours_back // 24 + 1
-        end_date = now_utc.strftime("%Y-%m-%d")
-        start_date = (now_utc - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        start_close = get_daily_close(ticker, start_date)
-        end_close = get_daily_close(ticker, end_date)
-        if start_close is None or end_close is None:
+        # Use 1-day interval for 24-48h, 1-day for 1w
+        interval = "1h" if hours_back <= 48 else "1d"
+        period   = "2d" if hours_back <= 48 else "5d"
+
+        url  = f"{YF_BASE}/{ticker}"
+        resp = requests.get(url, params={
+            "interval": interval,
+            "range":    period,
+            "includePrePost": False
+        }, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        resp.raise_for_status()
+
+        data   = resp.json()
+        result = data["chart"]["result"][0]
+        closes = result["indicators"]["quote"][0]["close"]
+        times  = result["timestamp"]
+
+        # Filter out None values
+        valid = [(t, c) for t, c in zip(times, closes) if c is not None]
+        if len(valid) < 2:
             return None
-        if start_close == 0:
-            return None
-        pct_change = (end_close - start_close) / start_close * 100
-        threshold = _rounding_threshold(hours_back)
+
+        # Get price at start of window and most recent
+        now_ts    = datetime.now(timezone.utc).timestamp()
+        start_ts  = now_ts - (hours_back * 3600)
+
+        # Find closest prices to start and end of window
+        start_prices = [(t, c) for t, c in valid if t >= start_ts]
+        if not start_prices:
+            start_prices = valid[-2:]
+
+        open_price  = start_prices[0][1]
+        close_price = valid[-1][1]
+        pct_change  = (close_price - open_price) / open_price * 100
+
+        # Tiered thresholds based on timeframe
+        if hours_back <= 24:
+            bull_threshold, bear_threshold = 0.2, -0.2   # Tighter for 24h
+        elif hours_back <= 48:
+            bull_threshold, bear_threshold = 0.3, -0.3   # Medium for 48h
+        else:
+            bull_threshold, bear_threshold = 0.5, -0.5   # Wider for 1w
+
         return {
-            "ticker": ticker,
-            "start_close": start_close,
-            "end_close": end_close,
-            "pct_change": round(pct_change, 2),
-            "direction": "bullish" if pct_change > threshold else
-                        "bearish" if pct_change < -threshold else "neutral",
-            "hours": hours_back,
-            "threshold_used": threshold}
+            "ticker":       ticker,
+            "open_price":   round(open_price, 2),
+            "close_price":  round(close_price, 2),
+            "pct_change":   round(pct_change, 2),
+            "direction":    "bullish" if pct_change > bull_threshold else
+                           "bearish" if pct_change < bear_threshold else "neutral",
+            "hours":        hours_back,
+            "threshold_used": bull_threshold
+        }
+
     except Exception as e:
         log.warning(f"Could not fetch price for {ticker}: {e}")
         return None
+
 
 def get_expired_unverified(conn: sqlite3.Connection) -> list[dict]:
     """Get predictions that have passed their timeframe but aren't verified"""
@@ -147,15 +175,15 @@ def verify_expired_predictions(conn: sqlite3.Connection) -> int:
                  f"({timeframe} window)")
 
         price_data = fetch_price_change(etf, hours)
-        if price_data is None:
+        if not price_data:
             log.warning(f"  Could not fetch price data for {etf} — skipping")
             continue
 
         actual_direction = price_data["direction"]
         notes = (f"Verified via {etf}: "
-                 f"{price_data['start_close']} → {price_data['end_close']} "
+                 f"{price_data['open_price']} → {price_data['close_price']} "
                  f"({price_data['pct_change']:+.2f}%) "
-                 f"threshold=±{price_data['threshold_used']:.1f}%")
+                 f"threshold=±{price_data.get('threshold_used', 0.2):.1f}%")
 
         verify_prediction(conn, pred_id, actual_direction, notes)
         verified_count += 1
@@ -179,8 +207,51 @@ def _next_trading_day(dt: datetime) -> datetime:
 
 def fetch_close_on_date(ticker: str, date_str: str) -> float | None:
     """Fetch the closing price for *ticker* on a specific trading date.
-    Delegates to get_daily_close so IBKR migration replaces one function."""
-    return get_daily_close(ticker, date_str)
+
+    Args:
+        ticker: ETF or stock ticker (e.g. 'XLK').
+        date_str: Date string 'YYYY-MM-DD' in America/New_York timezone.
+
+    Returns:
+        Closing price as float, or None on failure.
+    """
+    try:
+        # Convert NY date to UTC timestamps for Yahoo API
+        ny_tz = ZoneInfo("America/New_York")
+        local_date = datetime.strptime(date_str, "%Y-%m-%d").replace(
+            tzinfo=ny_tz
+        )
+        # period1 = start of that day (UTC), period2 = end of that day (UTC)
+        period1 = int((local_date.replace(hour=0, minute=0, second=0)
+                       .astimezone(timezone.utc)).timestamp())
+        period2 = int((local_date.replace(hour=23, minute=59, second=59)
+                       .astimezone(timezone.utc)).timestamp())
+
+        url = f"{YF_BASE}/{ticker}"
+        resp = requests.get(url, params={
+            "interval": "1d",
+            "period1": period1,
+            "period2": period2,
+            "includePrePost": False,
+        }, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        resp.raise_for_status()
+
+        data = resp.json()
+        result = data["chart"]["result"][0]
+        closes = result["indicators"]["quote"][0]["close"]
+        times = result["timestamp"]
+
+        valid = [(t, c) for t, c in zip(times, closes) if c is not None]
+        if not valid:
+            return None
+
+        # Return the last close within our date window
+        return round(valid[-1][1], 2)
+
+    except Exception as e:
+        log.warning(f"Could not fetch close for {ticker} on {date_str}: {e}")
+        return None
+
 
 def verify_rejected_signals(conn: sqlite3.Connection) -> int:
     """Compute next_day_drift + was_correct for rejected signal_ledger rows.

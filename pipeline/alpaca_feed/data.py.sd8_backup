@@ -169,37 +169,6 @@ def get_account_info() -> dict:
         return {}
 
 
-
-def get_daily_close(symbol: str, date_str: str) -> float | None:
-    """Fetch the closing price for *symbol* on a specific calendar date.
-    Uses Alpaca daily bars; single replace-point for IBKR migration.
-    Args: symbol ticker, date_str 'YYYY-MM-DD'
-    Returns: closing price as float, or None on failure."""
-    try:
-        from alpaca.data.historical import StockHistoricalDataClient
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame
-        from datetime import date as date_type, timedelta
-        client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
-        target_date = date_type.fromisoformat(date_str)
-        # Alpaca returns empty bars when start == end; query a window and
-        # filter to the target calendar date (bar timestamps are datetimes).
-        req = StockBarsRequest(
-            symbol_or_symbols=symbol, timeframe=TimeFrame.Day,
-            start=target_date - timedelta(days=5),
-            end=target_date + timedelta(days=1))
-        bars = client.get_stock_bars(req)
-        bar_list = bars.data.get(symbol, [])
-        close_rows = [b for b in bar_list
-                      if b.timestamp.date() == target_date]
-        if not close_rows:
-            return None
-        close = close_rows[-1].close
-        return round(float(close), 2) if close else None
-    except Exception as e:
-        log.warning(f"Could not fetch close for {symbol} on {date_str}: {e}")
-        return None
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
