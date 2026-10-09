@@ -1,6 +1,5 @@
 # Hermes Trader — Autonomous AI Trading Agent
 
-> Built for the [Alpaca AI Trading Agents Hackathon](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon) · Aug 28 – Sep 4, 2026
 
 An autonomous multi-layer AI trading system that has been running live since May 2026. It ingests financial news, generates sector predictions, critiques its own reasoning, enforces multi-layer safety gates, and executes paper trades through Alpaca — with a natural language interface powered by Hermes and a locally-hosted large language model. Core pipeline operations run fully autonomously; Hermes provides on-demand analysis and trade interaction via Discord.
 
@@ -82,11 +81,9 @@ Every prediction passes through six independent layers before triggering a trade
 - Full execution pipeline via `execute_trade()` — validation + order placement in one call
 - Refuses unsafe orders with exact explanation
 
-### Dual Alpaca Account Architecture
+### Alpaca Account
 
-- **Account #1 — Organic**: autonomous pipeline trading since May 2026
-- **Account #2 — Demo**: clean $100K account for demonstration purposes
-- Explicit MCP tools for each: `get_organic_account_info()` and `get_hackathon_account_info()`
+- **Organic account**: autonomous pipeline trading since May 2026
 - Safe sell validation prevents naked shorts when accounts diverge
 
 ---
@@ -154,7 +151,6 @@ News Sources (11 RSS feeds)
 | `get_latest_monthly_report` | Most recent monthly performance report |
 | `get_trade_history` | Recent closed trades with outcomes |
 | `get_organic_account_info` | Live Alpaca data for primary trading account |
-| `get_hackathon_account_info` | Live Alpaca data for demo account |
 | `get_signal_ledger` | Rejected signals with gate reasons for outcome analysis |
 | `get_idle_cash_analysis` | Opportunity cost of idle cash vs BIL equivalent |
 | `validate_trade` | Run a proposed trade through all portfolio gates |
@@ -183,16 +179,6 @@ On Aug 31, the operator asked Hermes to perform a deep analysis of 3 months of t
 
 ---
 
-## Hackathon Submission
-
-**Built with:**
-- Alpaca Trading API + MCP Server
-- Locally-hosted LLM inference (OpenAI-compatible)
-- Hermes Agent framework (Nous Research)
-- FastMCP for custom pipeline MCP server
-
-
----
 
 ## Setup
 
@@ -210,4 +196,3 @@ cp .env.example .env  # edit with your settings
 
 ---
 
-*Built during the Alpaca AI Trading Agents Hackathon, August 2026*

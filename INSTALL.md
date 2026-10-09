@@ -188,7 +188,6 @@ Once running, the pipeline exposes 16 tools via the MCP protocol:
 | `get_latest_monthly_report` | Monthly performance report |
 | `get_trade_history` | Recent closed trades |
 | `get_organic_account_info` | Primary Alpaca account |
-| `get_hackathon_account_info` | Secondary Alpaca account |
 | `get_signal_ledger` | Rejected signal tracking |
 | `get_idle_cash_analysis` | Cash opportunity cost |
 | `validate_trade` | Gate-by-gate trade validation |
