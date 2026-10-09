@@ -58,7 +58,7 @@ def get_system_prompt() -> str:
 
     # Load macro themes dynamically from taxonomy file
     try:
-        _taxonomy_path = Path(__file__).parent.parent / "data" / "theme_taxonomy.json"
+        _taxonomy_path = Path(__file__).parent.parent.parent / "data" / "theme_taxonomy.json"
         _taxonomy = json.loads(_taxonomy_path.read_text())
         _theme_list = []
         for _cat, _themes in _taxonomy.items():
@@ -200,7 +200,7 @@ def build_prompt(article: dict) -> str:
 def _save_new_themes(new_themes: list[str]) -> None:
     """Save newly proposed themes to the taxonomy file"""
     import json as _json
-    taxonomy_path = Path(__file__).parent.parent / "data" / "theme_taxonomy.json"
+    taxonomy_path = Path(__file__).parent.parent.parent / "data" / "theme_taxonomy.json"
     try:
         taxonomy = _json.loads(taxonomy_path.read_text())
         added = []
@@ -364,7 +364,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
             try:
                 import json as _json
                 _tax = _json.loads(
-                    (Path(__file__).parent.parent / "data" / "theme_taxonomy.json").read_text()
+                    (Path(__file__).parent.parent.parent / "data" / "theme_taxonomy.json").read_text()
                 )
                 _known = {t for v in _tax.values() for t in (v if isinstance(v, list) else [])}
             except:
