@@ -321,8 +321,7 @@ def is_market_hours() -> bool:
 
 def is_entry_window() -> bool:
     """Check if within preferred entry windows (morning or close)"""
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("America/New_York"))
+    now = datetime.now()
     if now.weekday() >= 5:
         return False
     if is_market_holiday():
@@ -934,8 +933,7 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
                     with open(pred_file) as f:
                         pred_data = json.load(f)
                         predictions.append(pred_data)
-                except Exception as e:
-                    log.warning(f"Failed to load prediction file {pred_file}: {e}")
+                except:
                     pass
 
         log.info(f"Loaded {len(predictions)} recent predictions")

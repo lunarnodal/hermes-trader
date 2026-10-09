@@ -197,8 +197,7 @@ def get_recent_signals(hours_back: int = 48) -> list[dict]:
                     s = json.loads(line)
                     if isinstance(s, dict) and s.get("scored_at", "") >= cutoff:
                         signals.append(s)
-                except Exception as e:
-                    log.warning(f"Failed to parse signal JSON line: {e}")
+                except:
                     continue
 
     return signals
@@ -231,8 +230,7 @@ def score_ticker(ticker: str, signals: list[dict]) -> dict:
             hours_ago = (now - scored_at).total_seconds() / 3600
             recency   = max(0, 1 - (hours_ago / 48))  # decay over 48h
             recency_scores.append(recency)
-        except Exception as e:
-            log.warning(f"Failed to parse scored_at for signal: {e}")
+        except:
             recency_scores.append(0.5)
 
     avg_recency = sum(recency_scores) / len(recency_scores)
@@ -331,8 +329,7 @@ def get_primary_sector(ticker: str) -> str | None:
         ).fetchone()
         conn.close()
         return row[0].lower().replace(" ", "_") if row and row[0] else None
-    except Exception as e:
-        log.warning(f"Could not fetch primary sector for {ticker}: {e}")
+    except:
         return None
 
 
@@ -380,8 +377,7 @@ def is_sp500_or_nasdaq(ticker: str) -> bool:
         ).fetchone()
         conn.close()
         return row is not None
-    except Exception as e:
-        log.warning(f"Could not verify ticker against tickers DB: {e}")
+    except:
         return True  # assume valid if DB unavailable
 
 

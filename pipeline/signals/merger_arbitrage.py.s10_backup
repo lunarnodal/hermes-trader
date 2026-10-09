@@ -659,6 +659,7 @@ def get_active_deals(
         List of active merger_arbitrage signals filtered by spread and recency.
     """
     from pathlib import Path as P
+    from datetime import datetime, timezone, timedelta
 
     signals_dir = P("/mnt/qnap/timeseries/signals")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
@@ -701,7 +702,11 @@ def get_active_deals(
 if __name__ == "__main__":
     import sys
     import logging
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
 
     # Demo: test with sample signals
     test_signals = [

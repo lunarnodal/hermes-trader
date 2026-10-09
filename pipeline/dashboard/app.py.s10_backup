@@ -1415,7 +1415,7 @@ def api_data():
             }
         }
     except Exception as e:
-        app.logger.warning(f"Theta positions unavailable: {e}")
+        log.warning(f"Theta positions unavailable: {e}")
         data["theta"] = {}
 
     return jsonify(data)

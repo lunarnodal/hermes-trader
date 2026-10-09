@@ -79,13 +79,10 @@ def is_market_open() -> bool:
         clock = client.get_clock()
         return clock.is_open
     except Exception:
-        from portfolio.market_calendar import is_trading_day
-        from datetime import date
-        today = date.today()
-        if not is_trading_day(today):
-            return False
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
+        if now.weekday() >= 5:
+            return False
         mins = now.hour * 60 + now.minute
         return 13 * 60 + 30 <= mins <= 20 * 60
 

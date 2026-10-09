@@ -178,6 +178,7 @@ def query_qdrant(query: str, limit: int = 15,
     vector = embed_query(query)
 
     # Build filters — recency + optional sentiment
+    from datetime import datetime, timezone, timedelta
     from qdrant_client.models import DatetimeRange, Range
 
     # In AUDIT_MODE skip recency filter — seeded test signals may be older
@@ -260,6 +261,7 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
         if s.get("tickers"):
             lines.append(f"  TICKERS: {', '.join(s['tickers'])}")
         if s.get("sectors"):
+            from tickers.taxonomy import normalize_sectors
             norm_sectors = normalize_sectors(s["sectors"])
             lines.append(f"  SECTORS: {', '.join(norm_sectors)}")
         if s.get("summary"):

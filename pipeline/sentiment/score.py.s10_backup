@@ -312,6 +312,7 @@ def score_article(article: dict, retries: int = 2) -> dict | None:
                 raw = raw.strip()
 
             # Fix common qwen3 JSON malformations:
+            import re as _re
             # Fix doubled sectors key: "sectors":"sectors": -> "sectors":
             raw = raw.replace('"sectors":"sectors":', '"sectors":')
             import re as _re
