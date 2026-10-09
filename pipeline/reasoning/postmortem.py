@@ -177,6 +177,61 @@ def get_signals_at_prediction_time(created_at: str,
     return signals[:30]  # limit to 30 most relevant
 
 
+def _extract_json(content: str) -> dict | None:
+    """Robustly extract JSON object from model output.
+
+    Handles: <anththinking>...</anththinking>, <think>...</think>, code fences,
+    and falls back to brace-matching if all else fails.
+    """
+    if not content:
+        return None
+
+    # Strip all thinking/reasoning tags (<anththinking>, <think>, etc.)
+    import re
+    content = re.sub(r'<anth.*?thinking>.*?</anth.*?thinking>', '', content, flags=re.DOTALL)
+    content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+    content = re.sub(r'<reasoning>.*?</reasoning>', '', content, flags=re.DOTALL)
+
+    # Try ```json block first
+    if "```json" in content:
+        content = content.split("```json")[1].split("```")[0].strip()
+    elif "```" in content:
+        content = content.split("```")[1].split("```")[0].strip()
+
+    # Try to parse
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: find the outermost balanced braces
+    start = content.find('{')
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(content)):
+        if content[i] == '{':
+            depth += 1
+        elif content[i] == '}':
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(content[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _validate_result(result: dict) -> bool:
+    """Check that required fields are non-empty and not placeholders."""
+    for field in ("root_cause", "lesson"):
+        val = (result.get(field) or "").strip()
+        if not val or val == "..." or val.lower() in ("...", "n/a", "unknown", "none"):
+            log.warning(f"Post-mortem result rejected: {field} = {val!r}")
+            return False
+    return True
+
+
 def call_reasoning_model(prompt: str) -> dict | None:
     """Call the reasoning model for post-mortem analysis"""
     try:
@@ -197,17 +252,16 @@ def call_reasoning_model(prompt: str) -> dict | None:
         msg = resp.json()["choices"][0]["message"]
         content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
 
-        # Strip thinking tags
-        if "</think>" in content:
-            content = content[content.rfind("</think>") + 8:].strip()
+        result = _extract_json(content)
+        if result is None:
+            log.error(f"Post-mortem JSON parse failed; raw output: {content[:200]}")
+            return None
 
-        # Parse JSON
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
+        if not _validate_result(result):
+            log.error(f"Post-mortem result rejected (placeholder fields); raw: {content[:200]}")
+            return None
 
-        return json.loads(content)
+        return result
 
     except Exception as e:
         log.error(f"Reasoning model post-mortem call failed: {e}")
