@@ -9,7 +9,10 @@ treated holidays like Juneteenth as normal trading days.
 Source: NYSE Group official holiday calendar
 """
 
-from datetime import date
+import logging
+from datetime import date, datetime, time, timedelta
+
+log = logging.getLogger(__name__)
 
 # Full-day closures (NYSE Group official schedule)
 MARKET_HOLIDAYS_2026 = {
@@ -32,9 +35,22 @@ MARKET_EARLY_CLOSE_2026 = {
 }
 
 
+COVERED_YEARS = {2026}
+_warned_years = set()
+
+
+def _check_covered(check_date: date) -> None:
+    if check_date.year not in COVERED_YEARS and check_date.year not in _warned_years:
+        _warned_years.add(check_date.year)
+        log.warning(f"market_calendar has no holiday table for {check_date.year}; "
+                    f"holidays in that year will be treated as trading days. "
+                    f"Add the NYSE schedule (https://www.nyse.com/markets/hours-calendars).")
+
+
 def is_market_holiday(check_date: date = None) -> bool:
     """Return True if the market is fully closed on this date"""
     check_date = check_date or date.today()
+    _check_covered(check_date)
     return check_date in MARKET_HOLIDAYS_2026
 
 
@@ -61,6 +77,26 @@ def is_trading_day(check_date: date = None) -> bool:
     if is_market_holiday(check_date):
         return False
     return True
+
+
+def session_close(check_date: date, tz) -> datetime:
+    """Regular-session close for a trading day, as an aware datetime in *tz*."""
+    hour = 13 if is_early_close(check_date) else 16
+    return datetime.combine(check_date, time(hour, 0), tzinfo=tz)
+
+
+def previous_trading_day(check_date: date) -> date:
+    d = check_date - timedelta(days=1)
+    while not is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
+
+
+def next_trading_day(check_date: date) -> date:
+    d = check_date + timedelta(days=1)
+    while not is_trading_day(d):
+        d += timedelta(days=1)
+    return d
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # pipeline/ for config
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -28,11 +30,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(str(
-        Path(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
-             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))
-        / "ingest.log"
-    )),
+        __import__("config").log_handler("ingest.log", directory=(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
+             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))),
         logging.StreamHandler()
     ]
 )

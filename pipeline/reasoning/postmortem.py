@@ -240,7 +240,9 @@ def call_reasoning_model(prompt: str) -> dict | None:
             json={
                 "model":      MODEL,
                 "stream":     False,
-                "max_tokens": 2048,
+                # Qwen3.6 thinks before answering; 2048 tokens was exhausted by the
+                # reasoning, leaving empty or truncated JSON. Match predict.py.
+                "max_tokens": 8192,
                 "temperature": 0.1,
                 "messages": [
                     {"role": "user", "content": prompt}
@@ -249,7 +251,17 @@ def call_reasoning_model(prompt: str) -> dict | None:
             timeout=600
         )
         resp.raise_for_status()
-        msg = resp.json()["choices"][0]["message"]
+        body = resp.json()
+        choice = body["choices"][0]
+        msg = choice["message"]
+        finish = choice.get("finish_reason")
+        usage = body.get("usage") or {}
+        log.info(f"Post-mortem LLM: finish_reason={finish} "
+                 f"completion_tokens={usage.get('completion_tokens')} "
+                 f"prompt_tokens={usage.get('prompt_tokens')}")
+        if finish == "length":
+            log.error("Post-mortem response truncated at max_tokens; discarding")
+            return None
         content = (msg.get("content") or msg.get("reasoning_content") or "").strip()
 
         result = _extract_json(content)

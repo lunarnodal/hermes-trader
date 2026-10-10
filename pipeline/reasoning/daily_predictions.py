@@ -20,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("/mnt/qnap/timeseries/logs/daily_predictions.log"),
+        __import__("config").log_handler("daily_predictions.log"),
         logging.StreamHandler()
     ]
 )
@@ -168,15 +168,15 @@ def run_daily_predictions() -> None:
         failure_warning = _check_repeating_failure(q["query"], q["label"])
         if failure_warning:
             log.warning(f"REPEATING FAILURE: {q['label']} — {failure_warning[:80]}")
-            # Inject warning into query to force extra skepticism
-            q = dict(q)
-            q["query"] = q["query"] + f" [WARNING: {failure_warning}]"
         for attempt in range(3):
             try:
+                # Warning goes into the reasoner prompt only, never into the query
+                # (the query drives retrieval, sector hints and the stored record).
                 result = run_prediction(
                     query=q["query"],
                     timeframe=q["timeframe"],
-                    limit=q["limit"]
+                    limit=q["limit"],
+                    context_warning=failure_warning,
                 )
 
                 if result.get("prediction"):

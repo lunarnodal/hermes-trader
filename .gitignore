@@ -59,3 +59,15 @@ pipeline/dashboard/app.py.before-emerald
 pipeline/**/*.bak
 backups/
 research/*.json
+# --- Round 2 (2026-10-10): the github remote is PUBLIC; never commit runtime state
+*.db-journal
+*.db-wal
+*.db-shm
+!.env.example
+*.bak
+*.orig
+*.rej
+*_backup
+*.s10_backup
+*.sd8_backup
+.venv/

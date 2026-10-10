@@ -14,6 +14,8 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # pipeline/ for config
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams, PointStruct, UpdateStatus
@@ -35,11 +37,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(str(
-        Path(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
-             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))
-        / "embed.log"
-    )),
+        __import__("config").log_handler("embed.log", directory=(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
+             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))),
         logging.StreamHandler()
     ]
 )

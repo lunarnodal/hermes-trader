@@ -254,6 +254,13 @@ def init_db() -> sqlite3.Connection:
         conn.commit()
         log.info(f"Portfolio initialized with ${CONFIG['starting_capital']:,.2f}")
 
+    # Migration -- option_symbol was added to prod by hand; make fresh DBs match
+    tcols = [r[1] for r in conn.execute("PRAGMA table_info(theta_positions)").fetchall()]
+    if "option_symbol" not in tcols:
+        conn.execute("ALTER TABLE theta_positions ADD COLUMN option_symbol TEXT")
+        conn.commit()
+        log.info("Migrated: added option_symbol column to theta_positions")
+
     # B6: Migration -- add iv_history column if table exists but column is missing
     cols = [r[1] for r in conn.execute("PRAGMA table_info(theta_risk_params)").fetchall()]
     if "iv_history" not in cols:
@@ -790,6 +797,8 @@ def confirm_theta_close(conn: sqlite3.Connection,
         return {}
 
     pos_id, ticker, sector, instrument_type, strike, premium, entry_date, assignment_event = pos
+    assignment_event = assignment_event or "early_close"  # column is NOT NULL in events table
+    sector = sector or "unknown"
     now = datetime.now(timezone.utc).isoformat()
 
     # Calculate P&L — each contract = 100 shares
@@ -942,157 +951,236 @@ def release_cash_for_put(conn, ticker: str, strike: float,
              f"(balance ${current_balance:.2f} → ${new_balance:.2f})")
 
 
-def cancel_expired_theta_positions(conn) -> int:
-    """
-    Mark theta positions as cancelled if their DAY order expired unfilled.
-    Called during portfolio cycle. Returns count of cancelled positions.
-    """
+def _theta_trading_client():
     import os
-    try:
-        from alpaca.trading.client import TradingClient
-        from alpaca.trading.requests import GetOrdersRequest
-        from alpaca.trading.enums import QueryOrderStatus
-        from dotenv import load_dotenv
-        load_dotenv(Path(__file__).parent.parent / ".env")
+    from alpaca.trading.client import TradingClient
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+    return TradingClient(
+        os.getenv("ALPACA_API_KEY", ""),
+        os.getenv("ALPACA_SECRET_KEY", ""),
+        paper=os.getenv("ALPACA_PAPER", "true").lower() == "true",
+    )
 
-        client = TradingClient(
-            os.getenv("ALPACA_API_KEY", ""),
-            os.getenv("ALPACA_SECRET_KEY", ""),
-            paper=True
-        )
 
-        # Get open theta positions that haven't been confirmed filled
-        rows = conn.execute("""
-            SELECT id, ticker, strike, option_symbol, premium_collected,
-                   instrument_type, sector, expiry
-            FROM theta_positions
-            WHERE status = 'open'
-            AND notes NOT LIKE '%confirmed_fill%'
-        """).fetchall()
+def _sto_order_id_from_notes(notes: str) -> str | None:
+    import re
+    m = re.search(r"order_id=([0-9a-fA-F-]{36})", notes or "")
+    return m.group(1) if m else None
 
-        if not rows:
-            return 0
 
-        # Get closed orders to check for expired/cancelled
-        closed_orders = client.get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=50)
-        )
-        closed_by_symbol = {str(o.symbol): o for o in closed_orders}
+def cancel_expired_theta_positions(conn, client=None) -> int:
+    """
+    Resolve theta positions whose sell-to-open fill is not yet confirmed.
 
-        # Get open orders to check pending
-        open_orders = client.get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.OPEN)
-        )
-        open_symbols = {str(o.symbol) for o in open_orders}
+      FILLED                         -> record actual premium, reserve CSP cash,
+                                        tag notes 'confirmed_fill'
+      EXPIRED / CANCELED / REJECTED  -> mark the position 'cancelled'
+      anything else                  -> leave pending
 
-        cancelled = 0
-        now = datetime.now(timezone.utc).isoformat()
+    The STO order is looked up by the order_id that execute_theta_recommendation()
+    writes into notes. Enum members are compared directly; the old string test
+    for "cancelled" never matched Alpaca's 'canceled'.
+    Assignment and expiry of *filled* positions are handled by
+    detect_theta_assignments(), not here. Returns the number cancelled.
+    """
+    from alpaca.trading.enums import OrderStatus
 
-        for pos_id, ticker, strike, option_symbol, premium, instrument_type, sector, expiry in rows:
-            if not option_symbol:
-                continue
-
-            if option_symbol in open_symbols:
-                # Still pending — leave it
-                continue
-
-            if option_symbol in closed_by_symbol:
-                order = closed_by_symbol[option_symbol]
-                status = str(order.status).lower()
-
-                if "filled" in status and float(order.filled_qty or 0) > 0:
-                    # Confirmed fill — update actual fill price, reserve cash
-                    actual_premium = float(order.filled_avg_price or premium)
-                    reserve_cash_for_put(conn, ticker, strike, option_symbol,
-                                         f"confirmed fill @ {actual_premium:.2f}")
-                    conn.execute("""
-                        UPDATE theta_positions
-                        SET notes = notes || ' | confirmed_fill',
-                            premium_collected = ?
-                        WHERE id = ?
-                    """, (actual_premium, pos_id))
-                    conn.commit()
-                    log.info(f"[THETA] Confirmed fill: {option_symbol} "
-                             f"premium=${actual_premium:.2f} — cash reserved")
-
-                elif "expired" in status or "cancelled" in status:
-                    # Order expired unfilled — cancel the DB position
-                    conn.execute("""
-                        UPDATE theta_positions
-                        SET status = 'cancelled',
-                            exit_date = ?,
-                            notes = notes || ' | order_expired_unfilled'
-                        WHERE id = ?
-                    """, (now, pos_id))
-                    conn.commit()
-                    cancelled += 1
-                    log.info(f"[THETA] Position cancelled (order expired): {option_symbol}")
-
-            # Check for assignment — option closed but equity position appeared
-            # Assignment: short put assigned = forced to buy 100 shares
-            try:
-                alpaca_positions = {p.symbol: p for p in client.get_all_positions()}
-                # Check if underlying equity appeared unexpectedly
-                if ticker in alpaca_positions and instrument_type == "cash_secured_put":
-                    eq_pos = alpaca_positions[ticker]
-                    eq_qty = float(eq_pos.qty)
-                    # Check if we already have this as an open equity position
-                    existing = conn.execute("""
-                        SELECT id FROM positions
-                        WHERE ticker = ? AND status = 'open'
-                    """, (ticker,)).fetchone()
-                    if not existing and eq_qty >= 100:
-                        # Assignment detected — create equity position
-                        avg_cost = float(eq_pos.avg_entry_price)
-                        log.info(f"[THETA] ASSIGNMENT DETECTED: {ticker} "
-                                 f"{eq_qty:.0f} shares @ ${avg_cost:.2f}")
-                        # Close theta position as assigned
-                        conn.execute("""
-                            UPDATE theta_positions
-                            SET status = 'assigned',
-                                assignment_event = 'exercised',
-                                exit_date = ?,
-                                exit_price = 0.0,
-                                pnl = ?,
-                                notes = notes || ' | ASSIGNED'
-                            WHERE id = ?
-                        """, (now, premium * 100, pos_id))
-                        # Record assignment event
-                        conn.execute("""
-                            INSERT INTO theta_assignment_events
-                            (position_id, ticker, sector, strike, expiry,
-                             event_type, event_date, notes)
-                            VALUES (?, ?, ?, ?, ?, 'assignment', ?, ?)
-                        """, (pos_id, ticker, sector, strike, expiry,
-                              now, f"assigned {eq_qty:.0f} shares @ ${avg_cost:.2f}"))
-                        # Release reserved cash (it was spent on shares)
-                        release_cash_for_put(conn, ticker, strike,
-                                             option_symbol=option_symbol,
-                                             notes="assignment — cash spent on shares")
-                        # Create equity position in portfolio DB
-                        cost_basis = round(avg_cost * eq_qty, 2)
-                        conn.execute("""
-                            INSERT INTO positions
-                            (ticker, sector, shares, entry_price, entry_date,
-                             current_price, stop_loss, cost_basis, status, notes)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-                        """, (ticker, sector, eq_qty, avg_cost, now,
-                              avg_cost,
-                              round(avg_cost * 0.95, 2),  # 5% stop loss
-                              cost_basis,
-                              f"Theta assignment: CSP strike=${strike:.2f} premium=${premium:.2f}"))
-                        conn.commit()
-                        log.info(f"[THETA] Assignment processed: {ticker} position "
-                                 f"created at ${avg_cost:.2f}, stop at "
-                                 f"${avg_cost*0.95:.2f}")
-            except Exception as _ae:
-                log.warning(f"[THETA] Assignment check failed for {ticker}: {_ae}")
-
-        return cancelled
-
-    except Exception as e:
-        log.warning(f"[THETA] Cancel expired positions failed: {e}")
+    rows = conn.execute("""
+        SELECT id, ticker, strike, option_symbol, premium_collected,
+               instrument_type, notes
+        FROM theta_positions
+        WHERE status = 'open'
+          AND notes NOT LIKE '%confirmed_fill%'
+    """).fetchall()
+    if not rows:
         return 0
+
+    if client is None:
+        client = _theta_trading_client()
+
+    cancelled = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for pos_id, ticker, strike, option_symbol, premium, instrument_type, notes in rows:
+        order_id = _sto_order_id_from_notes(notes)
+        if not order_id:
+            log.warning(f"[THETA] Position #{pos_id} {option_symbol} has no STO order id "
+                        f"in notes; cannot confirm fill — manual review")
+            continue
+        try:
+            order = client.get_order_by_id(order_id)
+        except Exception as e:
+            log.warning(f"[THETA] Could not fetch STO order {order_id} for #{pos_id}: {e}")
+            continue
+
+        if order.status == OrderStatus.FILLED and float(order.filled_qty or 0) > 0:
+            actual_premium = float(order.filled_avg_price or premium)
+            if instrument_type == "cash_secured_put":
+                reserve_cash_for_put(conn, ticker, strike, option_symbol,
+                                     f"confirmed fill @ {actual_premium:.2f}")
+            conn.execute("""
+                UPDATE theta_positions
+                SET notes = notes || ' | confirmed_fill',
+                    premium_collected = ?
+                WHERE id = ?
+            """, (actual_premium, pos_id))
+            conn.commit()
+            log.info(f"[THETA] Confirmed fill: {option_symbol} "
+                     f"premium=${actual_premium:.2f}")
+
+        elif order.status in (OrderStatus.EXPIRED, OrderStatus.CANCELED,
+                              OrderStatus.REJECTED, OrderStatus.DONE_FOR_DAY):
+            conn.execute("""
+                UPDATE theta_positions
+                SET status = 'cancelled', exit_date = ?,
+                    notes = notes || ' | order_' || ? || '_unfilled'
+                WHERE id = ?
+            """, (now, order.status.value, pos_id))
+            conn.commit()
+            cancelled += 1
+            log.info(f"[THETA] Position cancelled (STO {order.status.value}): {option_symbol}")
+
+    return cancelled
+
+
+def detect_theta_assignments(conn, client=None, today=None) -> dict:
+    """
+    Detect assignment or expiry of filled cash-secured puts.
+
+    Runs after sync_from_alpaca(), which mirrors broker equity positions into
+    the positions table. For each CSP in 'open' or 'closing' with a confirmed
+    STO fill whose option is no longer held at the broker:
+
+      * underlying shares held at broker >= 100  -> ASSIGNED
+          theta row 'assigned', assignment event, reservation released,
+          equity row tagged with the theta sector (created if sync has not)
+      * no shares and expiry has passed           -> EXPIRED worthless
+          theta row 'closed' (expired), full premium kept, reservation released
+      * no shares and expiry not yet passed       -> left alone. For 'closing'
+          rows this is the normal BTC-filled case, resolved by
+          check_theta_closing_fills(); for 'open' rows it is logged as an anomaly.
+
+    Each position is processed in a single transaction and rolled back on any
+    error, so a failure never leaves a half-processed assignment.
+    Covered calls are reported but not processed.
+    """
+    from zoneinfo import ZoneInfo
+
+    stats = {"assigned": 0, "expired": 0, "anomalies": 0, "errors": 0}
+    rows = conn.execute("""
+        SELECT id, ticker, sector, instrument_type, strike, expiry,
+               premium_collected, option_symbol, status
+        FROM theta_positions
+        WHERE status IN ('open', 'closing')
+          AND notes LIKE '%confirmed_fill%'
+    """).fetchall()
+    if not rows:
+        return stats
+
+    if client is None:
+        client = _theta_trading_client()
+    if today is None:
+        today = datetime.now(ZoneInfo("America/New_York")).date()
+
+    broker = {p.symbol: p for p in client.get_all_positions()}
+    conn.commit()  # flush anything pending so a rollback below only undoes our work
+
+    for (pos_id, ticker, sector, instrument_type, strike, expiry,
+         premium, option_symbol, status) in rows:
+        if not option_symbol or option_symbol in broker:
+            continue
+        if instrument_type != "cash_secured_put":
+            log.warning(f"[THETA] {instrument_type} #{pos_id} {option_symbol} no longer "
+                        f"held at broker — covered-call handling not implemented; manual review")
+            stats["anomalies"] += 1
+            continue
+
+        eq = broker.get(ticker)
+        eq_qty = float(eq.qty) if eq is not None else 0.0
+        try:
+            expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+        except Exception:
+            expiry_date = None
+
+        if eq_qty >= 100:
+            event, new_status, label = "assignment", "assigned", "exercised"
+        elif expiry_date is not None and today > expiry_date:
+            event, new_status, label = "expiry", "closed", "expired"
+        else:
+            if status == "open":
+                log.warning(f"[THETA] CSP #{pos_id} {option_symbol} missing at broker "
+                            f"before expiry with no {ticker} shares — manual review")
+                stats["anomalies"] += 1
+            continue
+
+        now = datetime.now(timezone.utc).isoformat()
+        pnl = round(float(premium) * 100, 2)
+        reserved = round(float(strike) * 100, 2)
+        try:
+            conn.execute("""
+                UPDATE theta_positions
+                SET status = ?, assignment_event = ?, exit_date = ?,
+                    exit_price = 0.0, pnl = ?, pnl_pct = 100.0,
+                    notes = notes || ?
+                WHERE id = ? AND status IN ('open', 'closing')
+            """, (new_status, label, now, pnl,
+                  f" | {label.upper()} (detected {today.isoformat()})", pos_id))
+            conn.execute("""
+                INSERT INTO theta_assignment_events
+                (sector, ticker, event_date, event_type, theta_position_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (sector or "unknown", ticker, now, event, pos_id))
+            if event == "assignment":
+                _increment_sector_assignment_count(conn, sector or "unknown")
+
+            last = conn.execute(
+                "SELECT balance FROM cash_ledger ORDER BY id DESC LIMIT 1").fetchone()
+            balance = float(last[0]) if last else 0.0
+            conn.execute("""
+                INSERT INTO cash_ledger (timestamp, amount, balance, description)
+                VALUES (?, ?, ?, ?)
+            """, (now, reserved, round(balance + reserved, 2),
+                  f"THETA RELEASE: CSP {ticker} strike=${float(strike):.2f} "
+                  f"{option_symbol} {label}"))
+
+            if event == "assignment":
+                avg_cost = float(eq.avg_entry_price)
+                existing = conn.execute(
+                    "SELECT id FROM positions WHERE ticker = ? AND status = 'open'",
+                    (ticker,)).fetchone()
+                tag = (f"Theta assignment: CSP {option_symbol} strike=${float(strike):.2f} "
+                       f"premium=${float(premium):.2f}")
+                if existing:
+                    conn.execute("""
+                        UPDATE positions
+                        SET sector = CASE WHEN sector IS NULL OR sector = 'unknown'
+                                          THEN ? ELSE sector END,
+                            notes = COALESCE(notes, '') || ' | ' || ?
+                        WHERE id = ?
+                    """, (sector or "unknown", tag, existing[0]))
+                else:
+                    conn.execute("""
+                        INSERT INTO positions
+                        (ticker, sector, shares, entry_price, entry_date,
+                         current_price, last_price_update, stop_loss, take_profit,
+                         status, notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                    """, (ticker, sector or "unknown", eq_qty, avg_cost, now,
+                          avg_cost, now, round(avg_cost * 0.95, 2),
+                          round(avg_cost * 1.04, 2), tag))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            stats["errors"] += 1
+            log.error(f"[THETA] {event} processing failed for #{pos_id} "
+                      f"{option_symbol}; rolled back: {e}")
+            continue
+
+        stats["assigned" if event == "assignment" else "expired"] += 1
+        log.info(f"[THETA] {label.upper()}: {option_symbol} #{pos_id} "
+                 f"premium kept ${pnl:.2f}, reservation ${reserved:.2f} released")
+
+    return stats
 
 
 def get_theta_history(conn: sqlite3.Connection, sector: str) -> list[dict]:

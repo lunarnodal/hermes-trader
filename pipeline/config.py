@@ -12,6 +12,7 @@ Environment variables:
     ENRICHMENT_DB_PATH — override enrichment_cache.db path
     EVENTS_DB_PATH     — override events.db path
     TRADING_DB_PATH    — override trading_pipeline.db path
+    LOG_DIR            — log directory (default: /mnt/qnap/timeseries/logs)
 """
 import os
 from pathlib import Path
@@ -30,3 +31,20 @@ TICKERS_DB    = _db("TICKERS_DB_PATH",    "tickers.db")
 ENRICHMENT_DB = _db("ENRICHMENT_DB_PATH", "enrichment_cache.db")
 EVENTS_DB     = _db("EVENTS_DB_PATH",     "events.db")
 TRADING_DB    = _db("TRADING_DB_PATH",    "trading_pipeline.db")
+
+LOG_DIR = Path(os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))
+
+
+def log_handler(filename: str, directory=None):
+    """File handler for <directory or LOG_DIR>/filename. If the directory is not
+    available (another host, mount missing) fall back to stderr instead of
+    failing at import time."""
+    import logging
+    import sys
+    path = Path(directory or LOG_DIR) / filename
+    try:
+        return logging.FileHandler(str(path))
+    except OSError as e:
+        print(f"[config] cannot open log file {path}: {e}; logging to stderr only",
+              file=sys.stderr)
+        return logging.StreamHandler(sys.stderr)

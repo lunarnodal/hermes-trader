@@ -24,7 +24,6 @@ from config import LESSONS_DB, PAPER_DB, RULES_DB
 
 log = logging.getLogger(__name__)
 
-PAPER_DB   = PAPER_DB
 LESSONS_DB = LESSONS_DB
 RULES_DB   = RULES_DB
 
@@ -284,7 +283,6 @@ def _get_alltime_sector_stats_with_cache(sector: str) -> dict:
         if now < expires_at:
             return stats
 
-    PAPER_DB = PAPER_DB
     conn = sqlite3.connect(PAPER_DB)
     stats = _get_alltime_sector_stats(conn, sector)
     conn.close()
@@ -310,7 +308,9 @@ def get_calibration_adjustment(sector: str) -> tuple[float, float]:
         wr = stats['win_rate']
         adj = calculate_adjustment(wr, stats['total'])
         return wr, adj
-    except Exception:
+    except Exception as e:
+        log.warning(f"Calibration gate: could not compute all-time stats for "
+                    f"{sector!r}: {e} — gate inactive for this call")
         return 0.50, 0.0
 
 

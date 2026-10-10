@@ -63,7 +63,8 @@ def sync_cash(conn: sqlite3.Connection, alpaca_cash: float) -> float:
         theta_reserved = conn.execute("""
             SELECT COALESCE(SUM(strike * 100), 0.0)
             FROM theta_positions
-            WHERE status = 'open'
+            WHERE status IN ('open', 'closing')
+            AND instrument_type = 'cash_secured_put'
             AND notes LIKE '%confirmed_fill%'
         """).fetchone()[0] or 0.0
     except Exception:

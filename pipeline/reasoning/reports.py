@@ -38,13 +38,11 @@ REPORTS_DIR = Path("/mnt/qnap/timeseries/reports")
 
 SPARK_HOST  = os.getenv("SPARK_LLAMA_HOST",
               os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083"))
-MODEL       = "unknown"
-try:
-    _m = requests.get(f"{SPARK_HOST}/v1/models", timeout=5).json()
-    MODEL = _m["data"][0]["id"]
-    log.info(f"Resolved active model from endpoint: {MODEL}")
-except Exception:
-    log.warning(f"Could not resolve model from {SPARK_HOST}/v1/models, using {MODEL}")
+
+
+def _model_label() -> str:
+    from reasoning.model_id import resolve_model
+    return resolve_model(SPARK_HOST)
 
 
 # ─── Data gathering ───────────────────────────────────────────────────────────
@@ -328,7 +326,7 @@ Key dependencies found: {json.dumps([f"{d['from']} → {d['to']} ({d['times']}x)
         resp = requests.post(
             f"{SPARK_HOST}/v1/chat/completions",
             json={
-                "model":       MODEL,
+                "model":       _model_label(),
                 "stream":      False,
                 "max_tokens":  4096,
                 "temperature": 0.2,
@@ -504,7 +502,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler("/mnt/qnap/timeseries/logs/reports.log"),
+            __import__("config").log_handler("reports.log"),
             logging.StreamHandler()
         ]
     )
