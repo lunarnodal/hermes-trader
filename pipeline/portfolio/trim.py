@@ -15,14 +15,17 @@ Nightly cycle:
 """
 import sqlite3
 import logging
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))  # pipeline/ for config
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("/mnt/qnap/timeseries/logs/trim.log"),
+        __import__("config").log_handler("trim.log"),
         logging.StreamHandler()
     ]
 )

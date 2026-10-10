@@ -36,26 +36,14 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler(str(
-        Path(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
-             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))
-        / "predict.log"
-    )),
+        __import__("config").log_handler("predict.log", directory=(os.getenv("AUDIT_LOG_DIR", "/opt/hermes-audit/logs") if AUDIT_MODE
+             else os.getenv("LOG_DIR", "/mnt/qnap/timeseries/logs"))),
         logging.StreamHandler()
     ]
 )
 log = logging.getLogger(__name__)
 
-# ─── Resolve actual model name from endpoint at startup ─────
-# Port 8083 serves whatever the operator loaded; don't guess.
-ACTIVE_MODEL = os.getenv("REASONING_MODEL", "unknown")
-try:
-    _m = requests.get(f"{SPARK_LLAMA}/v1/models", timeout=5).json()
-    ACTIVE_MODEL = _m["data"][0]["id"]
-    log.info(f"Resolved active model from endpoint: {ACTIVE_MODEL}")
-except Exception:
-    log.warning(f"Could not resolve model from {SPARK_LLAMA}/v1/models, using {ACTIVE_MODEL}")
-#
+# Model label is resolved lazily on first prediction (reasoning/model_id.py).
 
 try:
     from reasoning.calibration import calibrate_confidence
@@ -269,9 +257,18 @@ def format_signals_for_reasoning(signals: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _active_model() -> str:
+    from reasoning.model_id import resolve_model
+    return resolve_model(SPARK_LLAMA, os.getenv("REASONING_MODEL"))
+
+
 def run_prediction(query: str, timeframe: str = "24h",
-                   limit: int = 15) -> dict:
-    """Run a full prediction reasoning cycle"""
+                   limit: int = 15, context_warning: str | None = None) -> dict:
+    """Run a full prediction reasoning cycle.
+
+    context_warning is added to the reasoner prompt only. It must not be
+    appended to *query*: the query drives Qdrant retrieval, sector hints and
+    the stored predictions.query."""
     log.info(f"Running prediction: '{query}' ({timeframe})")
 
     # Extract sector hints from query for taxonomy expansion
@@ -358,10 +355,14 @@ PREDICTION TRACK RECORD (last {_total} verified predictions for this sector):
     except Exception as _e:
         log.warning(f"Could not load track record: {_e}")
 
+    warning_context = f"\n{context_warning}\n" if context_warning else ""
+    if context_warning:
+        log.info(f"Prompt warning injected: {context_warning[:120]}")
+
     user_prompt = f"""Query: {query}
 Timeframe: {timeframe}
 
-{track_record_context}
+{track_record_context}{warning_context}
 {signal_context}
 
 Based on these signals, provide your reasoning and prediction."""
@@ -479,7 +480,7 @@ Based on these signals, provide your reasoning and prediction."""
     return {
         "query":      query,
         "timeframe":  timeframe,
-        "model":      ACTIVE_MODEL,
+        "model":      _active_model(),
         "signals_used": len(signals),
         "reasoning":  content,
         "thinking_chars": len(thinking),

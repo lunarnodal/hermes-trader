@@ -859,42 +859,38 @@ def run_portfolio_cycle(dry_run: bool = True, exits_only: bool = False) -> dict:
     if is_market_hours() or dry_run:
         exits = check_stop_loss_take_profit(conn, dry_run)
         exits += check_time_exits(conn, dry_run)
-        # Check theta-gang positions for exit conditions
+        # Theta lifecycle, in order: confirm STO fills -> detect assignment /
+        # expiry -> confirm BTC fills -> evaluate new exits.
         if not dry_run:
-            try:
-                from alpaca_feed.theta_execution import check_theta_exits
-                theta_exits = check_theta_exits(conn)
-                if theta_exits:
-                    log.info(f"[THETA] {len(theta_exits)} theta position(s) closed")
-                    exits += theta_exits
-            except Exception as _te:
-                log.warning(f"[THETA] Exit check failed: {_te}")
-            # Cancel expired unfilled theta positions and confirm fills
             try:
                 from portfolio.db import cancel_expired_theta_positions
                 n_cancelled = cancel_expired_theta_positions(conn)
                 if n_cancelled:
-                    log.info(f"[THETA] {n_cancelled} expired position(s) cancelled")
+                    log.info(f"[THETA] {n_cancelled} unfilled STO position(s) cancelled")
             except Exception as _te:
-                log.warning(f"[THETA] Expired position cleanup failed: {_te}")
-        # Check theta-gang positions for exit conditions
-        if not dry_run:
+                log.warning(f"[THETA] STO fill confirmation failed: {_te}")
+            try:
+                from portfolio.db import detect_theta_assignments
+                _asg = detect_theta_assignments(conn)
+                if _asg.get("assigned") or _asg.get("expired") or _asg.get("anomalies") or _asg.get("errors"):
+                    log.info(f"[THETA] Assignment/expiry check: {_asg}")
+            except Exception as _te:
+                log.warning(f"[THETA] Assignment/expiry check failed: {_te}")
+            try:
+                from alpaca_feed.theta_execution import check_theta_closing_fills
+                _fills = check_theta_closing_fills(conn)
+                if _fills:
+                    log.info(f"[THETA] Closing-order results: {_fills}")
+            except Exception as _te:
+                log.warning(f"[THETA] Closing-fill check failed: {_te}")
             try:
                 from alpaca_feed.theta_execution import check_theta_exits
                 theta_exits = check_theta_exits(conn)
                 if theta_exits:
-                    log.info(f"[THETA] {len(theta_exits)} theta position(s) closed")
+                    log.info(f"[THETA] {len(theta_exits)} theta exit order(s) placed")
                     exits += theta_exits
             except Exception as _te:
                 log.warning(f"[THETA] Exit check failed: {_te}")
-            # Cancel expired unfilled theta positions and confirm fills
-            try:
-                from portfolio.db import cancel_expired_theta_positions
-                n_cancelled = cancel_expired_theta_positions(conn)
-                if n_cancelled:
-                    log.info(f"[THETA] {n_cancelled} expired position(s) cancelled")
-            except Exception as _te:
-                log.warning(f"[THETA] Expired position cleanup failed: {_te}")
         results["exits"] = exits
         if exits:
             log.info(f"Exit actions: {len(exits)}")

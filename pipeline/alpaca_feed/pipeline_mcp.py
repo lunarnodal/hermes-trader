@@ -40,7 +40,14 @@ from alpaca_feed.data import get_live_prices
 
 log = logging.getLogger(__name__)
 
-mcp = FastMCP("Trading Pipeline", host="127.0.0.1", port=8101)
+# Bind address comes from pipeline/.env. Default is loopback; set MCP_BIND_HOST to
+# airig's LAN IP only together with the nftables allowlist in ops/mcp_firewall.sh.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
+MCP_BIND_HOST = os.getenv("MCP_BIND_HOST", "127.0.0.1")
+MCP_PORT = int(os.getenv("MCP_PORT", "8101"))
+
+mcp = FastMCP("Trading Pipeline", host=MCP_BIND_HOST, port=MCP_PORT)
 
 from config import PAPER_DB, PORTFOLIO_DB, RULES_DB, LESSONS_DB, TRADING_DB as INSTRUMENT_DB
 
@@ -1404,5 +1411,6 @@ def get_theta_positions() -> str:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
-    log.info("Starting Trading Pipeline MCP on 127.0.0.1:8101")
+    log.info(f"Starting Trading Pipeline MCP on {MCP_BIND_HOST}:{MCP_PORT} "
+             f"(execute_trade disabled={_TOOL_DISABLED})")
     mcp.run(transport="streamable-http")

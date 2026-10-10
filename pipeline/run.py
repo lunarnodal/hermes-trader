@@ -22,7 +22,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("/mnt/qnap/timeseries/logs/orchestrator.log"),
+        __import__("config").log_handler("orchestrator.log"),
         logging.StreamHandler()
     ]
 )

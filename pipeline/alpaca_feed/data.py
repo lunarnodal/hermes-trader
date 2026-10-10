@@ -174,31 +174,44 @@ def get_account_info() -> dict:
 
 
 def get_daily_close(symbol: str, date_str: str) -> float | None:
-    """Fetch the closing price for *symbol* on a specific calendar date.
-    Uses Alpaca daily bars; single replace-point for IBKR migration.
-    Args: symbol ticker, date_str 'YYYY-MM-DD'
-    Returns: closing price as float, or None on failure."""
+    """Official daily close for *symbol* on trading date *date_str* (YYYY-MM-DD, ET).
+
+    Single replace-point for the IBKR migration.
+    Returns None if the session has not closed yet (or closed less than 16
+    minutes ago), if the date was not a trading day, or on error.
+
+    Alpaca's free data plan rejects SIP requests whose end time is within the
+    last 15 minutes ("subscription does not permit querying recent SIP data"),
+    so the request end is capped at now - 16 min and never set in the future.
+    """
     try:
+        from datetime import date as date_type, datetime as dt, timedelta, timezone
+        from zoneinfo import ZoneInfo
         from alpaca.data.historical import StockHistoricalDataClient
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
-        from datetime import date as date_type, timedelta
-        client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
-        target_date = date_type.fromisoformat(date_str)
-        # Alpaca returns empty bars when start == end; query a window and
-        # filter to the target calendar date (bar timestamps are datetimes).
-        req = StockBarsRequest(
-            symbol_or_symbols=symbol, timeframe=TimeFrame.Day,
-            start=target_date - timedelta(days=5),
-            end=target_date + timedelta(days=1))
-        bars = client.get_stock_bars(req)
-        bar_list = bars.data.get(symbol, [])
-        close_rows = [b for b in bar_list
-                      if b.timestamp.date() == target_date]
-        if not close_rows:
+        from portfolio.market_calendar import is_trading_day, session_close
+
+        ny = ZoneInfo("America/New_York")
+        target = date_type.fromisoformat(date_str)
+        if not is_trading_day(target):
             return None
-        close = close_rows[-1].close
-        return round(float(close), 2) if close else None
+        latest_allowed = dt.now(timezone.utc) - timedelta(minutes=16)
+        if session_close(target, ny).astimezone(timezone.utc) > latest_allowed:
+            return None  # session not finished (or too recent for the free SIP feed)
+
+        start = dt.combine(target - timedelta(days=5), dt.min.time(), tzinfo=ny)
+        end = min(dt.combine(target + timedelta(days=1), dt.min.time(), tzinfo=ny)
+                  .astimezone(timezone.utc), latest_allowed)
+        client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
+        bars = client.get_stock_bars(StockBarsRequest(
+            symbol_or_symbols=symbol, timeframe=TimeFrame.Day, start=start, end=end))
+        rows = [b for b in bars.data.get(symbol, [])
+                if b.timestamp.astimezone(ny).date() == target]
+        if not rows:
+            log.warning(f"No daily bar for {symbol} on {date_str}")
+            return None
+        return round(float(rows[-1].close), 2)
     except Exception as e:
         log.warning(f"Could not fetch close for {symbol} on {date_str}: {e}")
         return None

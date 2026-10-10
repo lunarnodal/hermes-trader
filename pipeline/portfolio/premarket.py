@@ -16,7 +16,6 @@ import logging
 import requests
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -200,40 +199,18 @@ def check_premarket_gaps(execute: bool = False) -> list[dict]:
                 should_exit = True
 
         if execute and should_exit:
+            # This job never sends an order to the broker. The old code marked the
+            # position closed and credited cash in the DB only (and the cash INSERT
+            # named columns cash_ledger does not have), so the DB would show a sale
+            # the broker never made. Until real pre-open exits are designed, flag
+            # loudly and leave the position for the 9:35 portfolio cycle.
             log.warning(
-                f"  AUTO-EXIT {ticker}: gap {data['gap_pct_display']} "
-                f"— enrichment confirms exit"
+                f"  EXIT FLAGGED {ticker}: gap {data['gap_pct_display']} "
+                f"(est. P&L ${(eff_price - entry) * shares:+.2f}) — no order placed; "
+                f"position left open for the 9:35 cycle"
             )
-            try:
-                now = datetime.now(timezone.utc).isoformat()
-                pnl     = (eff_price - entry) * shares
-                pnl_pct = (eff_price - entry) / entry * 100
-
-                port_conn.execute("""
-                    UPDATE positions
-                    SET status='closed', exit_price=?, exit_date=?,
-                        pnl=?, pnl_pct=?, exit_reason=?
-                    WHERE ticker=? AND status='open'
-                """, (
-                    eff_price, now, round(pnl, 2), round(pnl_pct, 2),
-                    f"premarket_gap ({data['gap_pct_display']})",
-                    ticker
-                ))
-                port_conn.execute(
-                    "INSERT INTO cash_ledger (amount, note, created_at) VALUES (?,?,?)",
-                    (round(eff_price * shares, 2),
-                     f"premarket_gap exit {ticker}", now)
-                )
-                port_conn.commit()
-                exits_triggered += 1
-                log.warning(
-                    f"  CLOSED {ticker}: {shares:.0f} shares @ "
-                    f"${eff_price:.2f} P&L=${pnl:+.2f} ({pnl_pct:+.1f}%)"
-                )
-                event['action'] = 'closed'
-            except Exception as e:
-                log.error(f"  Failed to close {ticker}: {e}")
-                event['action'] = 'error'
+            exits_triggered += 1
+            event['action'] = 'exit_flagged_no_order'
         elif severity == "WARN":
             log.warning(
                 f"  FLAGGED {ticker}: gap {data['gap_pct_display']} "
@@ -252,7 +229,7 @@ def check_premarket_gaps(execute: bool = False) -> list[dict]:
     if gap_events:
         log.info(f"Gap summary: {len(urgent)} urgent, {len(exits)} exit, "
                  f"{len(warns)} warn, {len(ups)} up, "
-                 f"{exits_triggered} auto-exits triggered")
+                 f"{exits_triggered} exits flagged (no orders placed)")
     else:
         log.info("No significant gaps detected")
 
@@ -277,7 +254,7 @@ if __name__ == "__main__":
         log.info("Pre-market gap check (DRY RUN)")
         events = check_premarket_gaps(execute=False)
     else:
-        log.info("Pre-market gap check (LIVE — auto-exit enabled)")
+        log.info("Pre-market gap check (execute mode — exits are flagged only; no orders placed)")
         events = check_premarket_gaps(execute=True)
 
     if events:

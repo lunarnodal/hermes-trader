@@ -8,7 +8,7 @@ Runs every 6 hours via cron
 
 import logging
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from pathlib import Path
@@ -27,7 +27,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("/mnt/qnap/timeseries/logs/verify.log"),
+        __import__("config").log_handler("verify.log"),
         logging.StreamHandler()
     ]
 )
@@ -52,36 +52,67 @@ def _rounding_threshold(hours_back: int) -> float:
     return 0.5
 
 
-def fetch_price_change(ticker: str, hours_back: int) -> dict | None:
-    """Fetch price change using Alpaca daily bars (close-to-close)."""
-    try:
-        now_utc = datetime.now(timezone.utc)
-        days_back = hours_back // 24 + 1
-        end_date = now_utc.strftime("%Y-%m-%d")
-        start_date = (now_utc - timedelta(days=days_back)).strftime("%Y-%m-%d")
-        start_close = get_daily_close(ticker, start_date)
-        end_close = get_daily_close(ticker, end_date)
-        if start_close is None or end_close is None:
-            return None
-        if start_close == 0:
-            return None
-        pct_change = (end_close - start_close) / start_close * 100
-        threshold = _rounding_threshold(hours_back)
-        return {
-            "ticker": ticker,
-            "start_close": start_close,
-            "end_close": end_close,
-            "pct_change": round(pct_change, 2),
-            "direction": "bullish" if pct_change > threshold else
-                        "bearish" if pct_change < -threshold else "neutral",
-            "hours": hours_back,
-            "threshold_used": threshold}
-    except Exception as e:
-        log.warning(f"Could not fetch price for {ticker}: {e}")
-        return None
+NY = ZoneInfo("America/New_York")
+DATA_DELAY = timedelta(minutes=16)   # free SIP feed excludes the last 15 minutes
 
-def get_expired_unverified(conn: sqlite3.Connection) -> list[dict]:
-    """Get predictions that have passed their timeframe but aren't verified"""
+
+def _last_close_at_or_before(ts: datetime) -> date:
+    """Trading date of the last regular-session close at or before *ts*."""
+    from portfolio.market_calendar import (is_trading_day, previous_trading_day,
+                                           session_close)
+    d = ts.astimezone(NY).date()
+    if is_trading_day(d) and ts >= session_close(d, NY):
+        return d
+    return previous_trading_day(d)
+
+
+def prediction_window(created: datetime, hours: int) -> tuple[date, date]:
+    """Close-to-close window a prediction is scored on.
+
+    start = last close at or before the prediction was made (the price it was made against)
+    end   = last close at or before the prediction expired; at least one session after start
+    """
+    from portfolio.market_calendar import next_trading_day
+    start = _last_close_at_or_before(created)
+    end = _last_close_at_or_before(created + timedelta(hours=hours))
+    if end <= start:
+        end = next_trading_day(start)
+    return start, end
+
+
+def _close_available(d: date, now: datetime) -> bool:
+    from portfolio.market_calendar import session_close
+    return now >= session_close(d, NY) + DATA_DELAY
+
+
+def fetch_price_change(ticker: str, start_date: date, end_date: date,
+                       hours: int) -> dict | None:
+    """Close-to-close change for *ticker* between two trading dates."""
+    start_close = get_daily_close(ticker, start_date.isoformat())
+    end_close = get_daily_close(ticker, end_date.isoformat())
+    if not start_close or end_close is None:
+        log.warning(f"  Missing close data for {ticker} "
+                    f"({start_date} / {end_date})")
+        return None
+    pct_change = (end_close - start_close) / start_close * 100
+    threshold = _rounding_threshold(hours)
+    return {
+        "ticker": ticker,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "start_close": start_close,
+        "end_close": end_close,
+        "pct_change": round(pct_change, 2),
+        "direction": "bullish" if pct_change > threshold else
+                     "bearish" if pct_change < -threshold else "neutral",
+        "hours": hours,
+        "threshold_used": threshold}
+
+
+def get_expired_unverified(conn: sqlite3.Connection, now: datetime | None = None) -> list[dict]:
+    """Unverified predictions whose scoring window has closed and whose
+    end-of-window close is available from the data feed."""
+    now = now or datetime.now(timezone.utc)
     rows = conn.execute("""
         SELECT id, created_at, query, timeframe, direction, confidence
         FROM predictions
@@ -89,39 +120,24 @@ def get_expired_unverified(conn: sqlite3.Connection) -> list[dict]:
         ORDER BY created_at ASC
     """).fetchall()
 
-    expired = []
-    now     = datetime.now(timezone.utc)
-
-    for row in rows:
-        pred_id, created_at, query, timeframe, direction, confidence = row
-        created = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-        hours   = TIMEFRAME_HOURS.get(timeframe, 24)
+    ready = []
+    for pred_id, created_at, query, timeframe, direction, confidence in rows:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        hours = TIMEFRAME_HOURS.get(timeframe, 24)
         expires = created + timedelta(hours=hours)
-
-        if now >= expires:
-            # Verify if market has opened at least once since prediction expired
-            # Server is now America/New_York so datetime.now() is ET directly
-            now_local = datetime.now()
-            is_weekday = now_local.weekday() < 5
-            market_open_today = now_local.replace(hour=9, minute=30, second=0, microsecond=0)
-            market_has_opened = now_local >= market_open_today
-
-            if not is_weekday or not market_has_opened:
-                log.info(f"Prediction #{pred_id} expired but market not yet open — "
-                         f"deferring to next market session")
-                continue
-
-            expired.append({
-                "id":         pred_id,
-                "created_at": created_at,
-                "query":      query,
-                "timeframe":  timeframe,
-                "direction":  direction,
-                "confidence": confidence,
-                "expires":    expires.isoformat()
-            })
-
-    return expired
+        if now < expires:
+            continue
+        start, end = prediction_window(created, hours)
+        if not _close_available(end, now):
+            log.info(f"Prediction #{pred_id} expired; close for {end} not available yet")
+            continue
+        ready.append({
+            "id": pred_id, "created_at": created_at, "query": query,
+            "timeframe": timeframe, "direction": direction,
+            "confidence": confidence, "expires": expires.isoformat(),
+            "start_date": start, "end_date": end,
+        })
+    return ready
 
 
 def verify_expired_predictions(conn: sqlite3.Connection) -> int:
@@ -137,25 +153,24 @@ def verify_expired_predictions(conn: sqlite3.Connection) -> int:
 
     for pred in expired:
         pred_id   = pred["id"]
-        query     = pred["query"]
         timeframe = pred["timeframe"]
         hours     = TIMEFRAME_HOURS.get(timeframe, 24)
 
-        # Determine which ETF to check
-        etf = get_sector_etf(query)
+        etf = get_sector_etf(pred["query"])
         log.info(f"Verifying prediction #{pred_id} using {etf} "
-                 f"({timeframe} window)")
+                 f"({timeframe}: close {pred['start_date']} -> close {pred['end_date']})")
 
-        price_data = fetch_price_change(etf, hours)
+        price_data = fetch_price_change(etf, pred["start_date"], pred["end_date"], hours)
         if price_data is None:
             log.warning(f"  Could not fetch price data for {etf} — skipping")
             continue
 
         actual_direction = price_data["direction"]
         notes = (f"Verified via {etf}: "
-                 f"{price_data['start_close']} → {price_data['end_close']} "
+                 f"{price_data['start_date']} {price_data['start_close']} → "
+                 f"{price_data['end_date']} {price_data['end_close']} "
                  f"({price_data['pct_change']:+.2f}%) "
-                 f"threshold=±{price_data['threshold_used']:.1f}%")
+                 f"threshold=±{price_data['threshold_used']:.1f}% [window-v2]")
 
         verify_prediction(conn, pred_id, actual_direction, notes)
         verified_count += 1
@@ -170,11 +185,10 @@ def verify_expired_predictions(conn: sqlite3.Connection) -> int:
 # ─── Rejected-signal outcome writer ─────────────────────────────────────────
 
 def _next_trading_day(dt: datetime) -> datetime:
-    """Return the next US trading day after *dt* (skip Sat/Sun)."""
-    d = dt + timedelta(days=1)
-    while d.weekday() >= 5:  # 5=Sat, 6=Sun
-        d += timedelta(days=1)
-    return d
+    """Next US trading day after *dt* (weekends and NYSE holidays skipped)."""
+    from portfolio.market_calendar import next_trading_day
+    nd = next_trading_day(dt.date())
+    return dt.replace(year=nd.year, month=nd.month, day=nd.day)
 
 
 def fetch_close_on_date(ticker: str, date_str: str) -> float | None:
@@ -210,15 +224,7 @@ def verify_rejected_signals(conn: sqlite3.Connection) -> int:
 
     log.info(f"Found {len(rows)} rejected signals to score outcomes for")
 
-    # Gate: only score when market is open (so we have fresh closes)
-    now_local = datetime.now()
-    is_weekday = now_local.weekday() < 5
-    market_open_today = now_local.replace(
-        hour=9, minute=30, second=0, microsecond=0
-    )
-    if not is_weekday or now_local < market_open_today:
-        log.info("Market not yet open — deferring rejected-signal scoring")
-        return 0
+    now_utc = datetime.now(timezone.utc)
 
     verified_count = 0
     for row in rows:
@@ -240,6 +246,10 @@ def verify_rejected_signals(conn: sqlite3.Connection) -> int:
             log.warning(
                 f"  Bad date for signal #{sig_id}: {created_at!r} — {e}"
             )
+            continue
+
+        # Score only once the next-day close is published (no future/recent requests)
+        if not _close_available(next_day_dt.date(), now_utc):
             continue
 
         # Fetch closes

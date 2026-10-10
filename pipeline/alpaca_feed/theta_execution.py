@@ -103,7 +103,7 @@ def place_buy_to_close(option_symbol: str,
     """
     try:
         from alpaca.trading.requests import LimitOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.enums import OrderSide, TimeInForce, PositionIntent
         from alpaca.data.historical import OptionHistoricalDataClient
         from alpaca.data.requests import OptionLatestQuoteRequest
 
@@ -134,6 +134,9 @@ def place_buy_to_close(option_symbol: str,
             side          = OrderSide.BUY,
             limit_price   = limit_price,
             time_in_force = TimeInForce.DAY,
+            # Explicit intent: if no short exists the broker rejects the order
+            # instead of opening a long option position.
+            position_intent = PositionIntent.BUY_TO_CLOSE,
         )
 
         order = client.submit_order(req)
@@ -191,6 +194,7 @@ def check_theta_exits(conn) -> list[dict]:
                    premium_collected, entry_date, option_symbol
             FROM theta_positions
             WHERE status = 'open'
+              AND notes LIKE '%confirmed_fill%'
         """).fetchall()
 
         if not rows:
@@ -291,123 +295,95 @@ def check_theta_exits(conn) -> list[dict]:
     return exits
 
 
-def check_theta_closing_fills(conn) -> list[dict]:
+_ORDER_ID_RE = None
+
+
+def _btc_order_id_from_notes(notes: str) -> str | None:
+    """Return the BTC order id that transition_theta_closing() wrote into notes."""
+    global _ORDER_ID_RE
+    import re
+    if _ORDER_ID_RE is None:
+        _ORDER_ID_RE = re.compile(r"closing: order=([0-9a-fA-F-]{36})")
+    matches = _ORDER_ID_RE.findall(notes or "")
+    return matches[-1] if matches else None
+
+
+def check_theta_closing_fills(conn, client=None) -> list[dict]:
     """
-    Check all 'closing' theta positions for BTC fill confirmation.
-    Called during portfolio cycle after check_theta_exits().
-    If fill confirmed -> close with actual fill price + release cash.
-    If DAY order expired unfilled -> revert to 'open'.
+    Resolve every theta position in 'closing' state using the BTC order id
+    stored when the order was placed.
+
+      FILLED                         -> confirm close at the actual fill price,
+                                        release the CSP cash reservation
+      EXPIRED / CANCELED / REJECTED  -> revert to 'open' (retry next cycle)
+      anything else (new, accepted, pending, partially filled)
+                                     -> leave in 'closing'
+
+    Enum members are compared directly. str(OrderSide.BUY) is 'OrderSide.BUY'
+    on Python 3.11+, so string comparison against 'buy' never matches.
+    Called from manager.run_portfolio_cycle() after check_theta_exits().
     """
+    from alpaca.trading.enums import OrderStatus
+    from portfolio.db import confirm_theta_close, release_cash_for_put
+
     results = []
-    try:
-        import os
-        from alpaca.trading.client import TradingClient
-        from alpaca.trading.requests import GetOrdersRequest
-        from alpaca.trading.enums import QueryOrderStatus
+    rows = conn.execute("""
+        SELECT id, ticker, strike, option_symbol, premium_collected,
+               instrument_type, notes
+        FROM theta_positions
+        WHERE status = 'closing'
+    """).fetchall()
+    if not rows:
+        return results
 
-        client = TradingClient(
-            os.getenv("ALPACA_API_KEY", ""),
-            os.getenv("ALPACA_SECRET_KEY", ""),
-            paper=os.getenv("ALPACA_PAPER", "true").lower() == "true"
-        )
+    if client is None:
+        client = _get_trading_client()
 
-        # Get positions in 'closing' state
-        rows = conn.execute("""
-            SELECT id, ticker, sector, instrument_type, strike, expiry,
-                   premium_collected, entry_date, option_symbol,
-                   exit_price, assignment_event
-            FROM theta_positions
-            WHERE status = 'closing'
-        """).fetchall()
+    terminal_unfilled = {OrderStatus.EXPIRED, OrderStatus.CANCELED,
+                         OrderStatus.REJECTED, OrderStatus.DONE_FOR_DAY}
 
-        if not rows:
-            return results
+    for pos_id, ticker, strike, option_symbol, premium, instrument_type, notes in rows:
+        order_id = _btc_order_id_from_notes(notes)
+        if not order_id:
+            log.warning(f"[THETA] Closing position #{pos_id} {option_symbol} has no "
+                        f"BTC order id in notes; leaving in 'closing' for manual review")
+            results.append({"ticker": ticker, "action": "BTC_UNKNOWN", "pos_id": pos_id})
+            continue
+        try:
+            order = client.get_order_by_id(order_id)
+        except Exception as e:
+            log.warning(f"[THETA] Could not fetch BTC order {order_id} for #{pos_id}: {e}")
+            continue
 
-        # Check closed orders for BTC fills
-        closed_orders = client.get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=50)
-        )
-        buy_filled = {}  # option_symbol -> order
-        for o in closed_orders:
-            if str(o.side) == "buy" and "filled" in str(o.status).lower():
-                buy_filled[str(o.symbol)] = o
+        if order.status == OrderStatus.FILLED:
+            fill = float(order.filled_avg_price)
+            closed = confirm_theta_close(
+                conn, pos_id, fill, notes=f"btc_order={order_id}")
+            if closed and instrument_type == "cash_secured_put":
+                release_cash_for_put(
+                    conn, ticker, strike, option_symbol=option_symbol,
+                    notes=f"closed: {closed.get('assignment_event')} "
+                          f"fill=${fill:.2f} order={order_id}")
+            pnl = closed.get("pnl") if closed else None
+            results.append({"ticker": ticker, "action": "BTC_FILLED",
+                            "fill_price": fill, "pnl": pnl, "pos_id": pos_id})
+            log.info(f"[THETA] BTC fill confirmed: {option_symbol} @ ${fill:.2f} "
+                     f"P&L=${pnl if pnl is not None else float('nan'):.2f}")
 
-        # Check open orders (still pending)
-        open_orders = client.get_orders(
-            GetOrdersRequest(status=QueryOrderStatus.OPEN)
-        )
-        buy_open = {str(o.symbol) for o in open_orders if str(o.side) == "buy"}
-
-        for row in rows:
-            pos_id, ticker, sector, instrument_type, strike, expiry, \
-                premium_collected, entry_date, option_symbol, \
-                expected_fill, assignment_event = row
-
-            if not option_symbol:
-                continue
-
-            if option_symbol in buy_filled:
-                # BTC fill confirmed — finalize close with actual fill price
-                order = buy_filled[option_symbol]
-                actual_price = float(order.filled_avg_price or expected_fill)
-
-                from portfolio.db import confirm_theta_close, release_cash_for_put
-
-                confirm_theta_close(
-                    conn, pos_id, actual_price,
-                    notes=f"btc_filled {assignment_event or 'profit_close'}"
-                )
-
-                # Release reserved cash now that close is confirmed
-                # Match by option_symbol, not ticker — prevents releasing
-                # another position's reservation when two CSPs for the same
-                # ticker exist (e.g., two sequential XLK puts).
-                reserved = conn.execute("""
-                    SELECT COUNT(*) FROM cash_ledger
-                    WHERE description LIKE ? AND amount < 0
-                """, (f'%THETA RESERVE%{option_symbol}%',)).fetchone()[0]
-                if reserved > 0:
-                    release_cash_for_put(
-                        conn, ticker, strike,
-                        option_symbol=option_symbol,
-                        premium_collected=premium_collected,
-                        notes=f"confirmed close: {assignment_event}"
-                    )
-                else:
-                    log.info(f"[THETA] Skipping cash release for {ticker} "
-                             f"— no prior reservation found")
-
-                pnl = round((premium_collected - actual_price) * 100, 2)
-                results.append({
-                    "ticker":     ticker,
-                    "action":     "BTC_FILLED",
-                    "fill_price": actual_price,
-                    "pnl":        pnl,
-                })
-                log.info(f"[THETA] BTC fill confirmed: {option_symbol} "
-                         f"@ ${actual_price:.2f} P&L=${pnl:.2f}")
-
-            elif option_symbol in buy_open:
-                # Still pending — wait for next cycle
-                continue
-
-            else:
-                # Not in open or closed — DAY order expired unfilled
-                # Revert to 'open' so position can be retried next cycle
-                conn.execute("""
-                    UPDATE theta_positions
-                    SET status = 'open', assignment_event = NULL,
-                        exit_price = NULL,
-                        notes = notes || ' | btc_expired_reverted'
-                    WHERE id = ?
-                """, (pos_id,))
-                conn.commit()
-                log.info(f"[THETA] BTC expired unfilled — reverted "
-                         f"{ticker} #{pos_id} to open")
-                results.append({"ticker": ticker, "action": "BTC_EXPIRED"})
-
-    except Exception as e:
-        log.error(f"[THETA] Closing fills check failed: {e}")
+        elif order.status in terminal_unfilled:
+            conn.execute("""
+                UPDATE theta_positions
+                SET status = 'open', assignment_event = NULL, exit_price = NULL,
+                    notes = notes || ' | btc_' || ? || '_reverted order=' || ?
+                WHERE id = ? AND status = 'closing'
+            """, (order.status.value, order_id, pos_id))
+            conn.commit()
+            log.info(f"[THETA] BTC {order.status.value} unfilled; reverted "
+                     f"{ticker} #{pos_id} to open")
+            results.append({"ticker": ticker, "action": "BTC_REVERTED",
+                            "status": order.status.value, "pos_id": pos_id})
+        else:
+            log.debug(f"[THETA] BTC {order_id} for #{pos_id} still {order.status.value}")
 
     return results
 
@@ -470,7 +446,7 @@ def execute_theta_recommendation(rec: dict, conn) -> dict | None:
 
         # Check TOTAL theta exposure — cap at 35% of portfolio across all open positions
         existing_theta_cash = conn.execute(
-            "SELECT COALESCE(SUM(strike * 100), 0) FROM theta_positions WHERE status = 'open'"
+            "SELECT COALESCE(SUM(strike * 100), 0) FROM theta_positions WHERE status IN ('open', 'closing')"
         ).fetchone()[0]
         max_total_theta = port * 0.35
         if existing_theta_cash + cash_required > max_total_theta:
