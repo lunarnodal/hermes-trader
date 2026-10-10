@@ -2,12 +2,12 @@
 Phase 4 — Periodic self-reflection reports
 
 Generates weekly, monthly, quarterly, and yearly performance reports.
-Each report is written by DeepSeek after reviewing all available data,
+Each report is written by Qwen3.6-27B after reviewing all available data,
 and saved as markdown to /mnt/qnap/timeseries/reports/
 
 Reports serve dual purpose:
   1. Human-readable performance summary for you to review
-  2. Learning input — DeepSeek identifies patterns and recommends adjustments
+  2. Learning input — Qwen3.6-27B identifies patterns and recommends adjustments
 
 Cron schedule:
   Weekly:    Sunday 11:00 PM ET
@@ -247,7 +247,7 @@ def get_lessons_data(since: datetime) -> dict:
         return {'lessons': 0, 'top_lessons': [], 'dependencies': []}
 
 
-# ─── DeepSeek report generation ───────────────────────────────────────────────
+# ─── Qwen3.6-27B report generation ───────────────────────────────────────────────
 
 REPORT_PROMPT = """You are analyzing the performance of an autonomous AI trading system.
 Write a {period_name} performance report based on the data below.
@@ -279,12 +279,12 @@ Include a section on idle cash opportunity cost and what BIL/treasury parking wo
 Format as clean markdown."""
 
 
-def generate_report_with_deepseek(period_name: str,
+def generate_report_with_qwen(period_name: str,
                                    portfolio: dict,
                                    predictions: dict,
                                    rules: dict,
                                    lessons: dict) -> str:
-    """Ask DeepSeek to write the report narrative"""
+    """Ask Qwen3.6-27B to write the report narrative"""
 
     best  = portfolio['best_trade']
     worst = portfolio['worst_trade']
@@ -355,7 +355,7 @@ Key dependencies found: {json.dumps([f"{d['from']} → {d['to']} ({d['times']}x)
         return content
 
     except Exception as e:
-        log.error(f"DeepSeek report generation failed: {e}")
+        log.error(f"Qwen3.6-27B report generation failed: {e}")
         return f"Report generation failed: {e}"
 
 
@@ -398,9 +398,9 @@ def build_report(period_name: str, since: datetime) -> str:
              f"{predictions['total']} predictions, "
              f"{rules['new_rules']} new rules")
 
-    # Generate narrative with DeepSeek
-    log.info("Generating report narrative with DeepSeek...")
-    narrative = generate_report_with_deepseek(
+    # Generate narrative with Qwen3.6-27B
+    log.info("Generating report narrative with Qwen3.6-27B...")
+    narrative = generate_report_with_qwen(
         period_name, portfolio, predictions, rules, lessons
     )
 

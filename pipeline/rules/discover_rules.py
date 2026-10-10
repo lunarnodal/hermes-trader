@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Rule discovery agent
-Uses DeepSeek-R1-70B on Spark to analyze recent signals
+Uses Qwen3.6-27B on airig port 8083 to analyze recent signals
 and propose new inference rules.
 Runs daily via cron.
 """
@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 SPARK_LLAMA_HOST = os.getenv("SPARK_LLAMA_HOST", "http://172.29.10.225:8083")
-DISCOVERY_MODEL   = os.getenv("REASONING_MODEL", "deepseek-r1")
+DISCOVERY_MODEL   = os.getenv("REASONING_MODEL", "qwen3.6-27b")
 SIGNALS_DIR       = Path(os.getenv("TIMESERIES_DIR", "/mnt/qnap/timeseries/signals"))
 LOOKBACK_DAYS     = 7
 
@@ -93,7 +93,7 @@ def discover_rules_via_llm(signals: list[dict],
     context  = "\n".join(signal_lines)
     user_msg = f"Recent signals:\n{context}\n\nPropose NEW rules only. Output JSON array."
 
-    log.info(f"Sending {len(signal_lines)} signals to DeepSeek for rule discovery")
+    log.info(f"Sending {len(signal_lines)} signals to Qwen for rule discovery")
 
     try:
         # Retry up to 3 times on 500 errors (Spark may still be initializing)
@@ -168,11 +168,11 @@ def discover_rules_via_llm(signals: list[dict],
             content = content[start:end]
 
         if not content:
-            log.warning("Empty response from DeepSeek")
+            log.warning("Empty response from Qwen")
             return []
 
         proposals = json.loads(content)
-        log.info(f"DeepSeek proposed {len(proposals)} new rules")
+        log.info(f"Qwen proposed {len(proposals)} new rules")
         return proposals if isinstance(proposals, list) else []
 
     except Exception as e:
