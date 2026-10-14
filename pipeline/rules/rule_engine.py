@@ -100,20 +100,30 @@ def seed_static_rules(conn: sqlite3.Connection) -> None:
 
     for trigger, sectors in static_rules:
         existing = conn.execute(
-            "SELECT id FROM inference_rules WHERE trigger = ?", (trigger,)
+            "SELECT id, sectors, confidence FROM inference_rules WHERE trigger = ?", (trigger,)
         ).fetchone()
 
         if existing:
             # Skip update if user has modified confidence away from default 0.9
             # This preserves DB-level overrides made by the operator
-            if existing[0] == 0.9:
-                conn.execute("""
-                    UPDATE inference_rules
-                    SET sectors = ?, updated_at = ?, source = 'static'
-                    WHERE trigger = ?
-                """, (json.dumps(sectors), now, trigger))
+            if existing[2] == 0.9:
+                # Update only when the stored sectors actually differ — no
+                # rewrite / log line for rows already in sync (no-op).
+                # Unreadable or NULL sectors count as "differ" (the update
+                # repairs the row); never a crash.
+                try:
+                    stored = json.loads(existing[1]) if existing[1] else None
+                except (ValueError, TypeError):
+                    stored = None
+                if stored != sectors:
+                    conn.execute("""
+                        UPDATE inference_rules
+                        SET sectors = ?, updated_at = ?, source = 'static'
+                        WHERE trigger = ?
+                    """, (json.dumps(sectors), now, trigger))
+                    log.info(f"Seed update for '{trigger}': sectors → {sectors}")
             else:
-                log.debug(f"Skipping seed update for '{trigger}' — user-modified confidence {existing[0]}")
+                log.debug(f"Skipping seed update for '{trigger}' — user-modified confidence {existing[2]}")
         else:
             conn.execute("""
                 INSERT INTO inference_rules
