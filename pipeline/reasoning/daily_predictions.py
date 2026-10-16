@@ -141,6 +141,7 @@ def run_daily_predictions() -> None:
                 SELECT direction, was_correct, confidence
                 FROM predictions
                 WHERE query LIKE ? AND was_correct IS NOT NULL
+                  AND direction IN ('bullish','bearish')
                   AND confidence >= 0.70
                 ORDER BY created_at DESC LIMIT 10
             """, (f"%{sector_hint}%",)).fetchall()

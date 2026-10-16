@@ -368,6 +368,7 @@ def run_postmortem(prediction_id: int = None) -> int:
                actual_direction, created_at
         FROM predictions
         WHERE was_correct = 0
+          AND direction IN ('bullish','bearish')
           AND confidence >= ?
     """
     params = [MIN_CONFIDENCE_FOR_POSTMORTEM]

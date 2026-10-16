@@ -697,6 +697,7 @@ def generate_recommendations(predictions: list[dict],
                                SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
                         FROM predictions
                         WHERE was_correct IS NOT NULL
+                          AND direction IN ('bullish','bearish')
                           AND created_at >= datetime('now', '-90 days')
                           AND (query LIKE ? OR query LIKE ?)
                     """, (f'%{sector}%', f'%{sector.replace("_", " ")}%')).fetchone()

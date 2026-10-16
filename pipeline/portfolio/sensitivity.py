@@ -95,6 +95,7 @@ def _compute_stft_outcomes(
             SELECT query, direction, was_correct, confidence
             FROM predictions
             WHERE verified_at >= ? AND was_correct IS NOT NULL
+              AND direction IN ('bullish','bearish')
             ORDER BY verified_at DESC
         """, (cutoff,)).fetchall()
     except Exception:

@@ -176,10 +176,27 @@ def get_prediction_data(since: datetime) -> dict:
         if p[3] == 1:
             direction_stats[p[1]]['correct'] += 1
 
+    # --- Directional hit rate (bullish + bearish only) ---
+    directional_preds = [p for p in preds if p[1] in ('bullish', 'bearish')]
+    directional_correct = sum(1 for p in directional_preds if p[3] == 1)
+    directional_hit_rate = round(directional_correct / len(directional_preds), 3) if directional_preds else 0
+
+    # --- Abstention accuracy (neutral + mixed: correct when actual = neutral) ---
+    abstention_preds = [p for p in preds if p[1] in ('neutral', 'mixed')]
+    abstention_correct = sum(1 for p in abstention_preds if (p[4] or '').lower() == 'neutral')
+    abstention_accuracy = round(abstention_correct / len(abstention_preds), 3) if abstention_preds else 0
+
+    # --- Market-neutral base rate (share of verified with actual_direction = neutral) ---
+    neutral_actuals = sum(1 for p in preds if (p[4] or '').lower() == 'neutral')
+    market_neutral_base_rate = round(neutral_actuals / len(preds), 3) if preds else 0
+
     return {
         'total':           len(preds),
         'correct':         correct,
         'win_rate':        round(correct / len(preds), 3) if preds else 0,
+        'directional_hit_rate': directional_hit_rate,
+        'abstention_accuracy': abstention_accuracy,
+        'market_neutral_base_rate': market_neutral_base_rate,
         'by_sector':       {s: {**v, 'win_rate': round(v['correct']/v['total'], 3)}
                            for s, v in sector_stats.items()},
         'by_direction':    {d: {**v, 'win_rate': round(v['correct']/v['total'], 3)}
@@ -305,6 +322,9 @@ def generate_report_with_qwen(period_name: str,
     prediction_summary = f"""
 Total verified predictions: {predictions['total']}
 Overall win rate: {predictions['win_rate']:.1%}
+Directional hit rate (bullish+bearish only): {predictions.get('directional_hit_rate', 0):.1%}
+Abstention accuracy (neutral+mixed, correct=actual neutral): {predictions.get('abstention_accuracy', 0):.1%}
+Market-neutral base rate (actual=neutral): {predictions.get('market_neutral_base_rate', 0):.1%}
 By sector: {json.dumps({s: f"{v['correct']}/{v['total']} = {v['win_rate']:.0%}"
                          for s, v in predictions.get('by_sector', {}).items()}, indent=2)}
 By direction: {json.dumps({d: f"{v['correct']}/{v['total']} = {v['win_rate']:.0%}"

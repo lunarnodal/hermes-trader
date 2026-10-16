@@ -179,6 +179,7 @@ def compute_stft() -> dict:
         SELECT query, direction, was_correct, confidence, verified_at
         FROM predictions
         WHERE was_correct IS NOT NULL
+          AND direction IN ('bullish','bearish')
           AND ( ? IS NULL OR verified_at > ? )
         ORDER BY verified_at DESC
     """, (watermark, watermark)).fetchall()
@@ -355,6 +356,7 @@ def reconcile_industrials_trim() -> float:
                   SUM(CASE WHEN was_correct=1 THEN 1 ELSE 0 END)*1.0/COUNT(*)
            FROM predictions
            WHERE verified_at >= ? AND was_correct IS NOT NULL
+             AND direction IN ('bullish','bearish')
              AND (query LIKE '%industrials%'
                   OR query LIKE '%manufacturing%'
                   OR query LIKE '%infrastructure%'

@@ -151,6 +151,7 @@ def get_sector_win_rate(sector: str, window: int = 20) -> dict | None:
         rows = conn.execute("""
             SELECT was_correct FROM predictions
             WHERE query LIKE ? AND was_correct IS NOT NULL
+              AND direction IN ('bullish','bearish')
             ORDER BY created_at DESC LIMIT ?
         """, (f"%{sector}%", window)).fetchall()
         conn.close()
@@ -253,7 +254,7 @@ def _get_alltime_sector_stats(conn: sqlite3.Connection, sector: str) -> dict:
     params.append(cutoff)
 
     # ---- Single-pass SQL aggregation — O(1) memory vs O(n) fetchall ----
-    full_where = f"was_correct IS NOT NULL AND ({where_clauses}){date_clause}"
+    full_where = f"was_correct IS NOT NULL AND direction IN ('bullish','bearish') AND ({where_clauses}){date_clause}"
     row = conn.execute(
         f"SELECT COUNT(*), SUM(was_correct) FROM predictions WHERE {full_where}",
         params

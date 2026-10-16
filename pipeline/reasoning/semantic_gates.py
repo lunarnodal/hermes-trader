@@ -150,6 +150,7 @@ def semantic_win_rate(sector_query: str,
                        SUM(CASE WHEN was_correct = 1 THEN 1 ELSE 0 END) as correct
                 FROM predictions
                 WHERE was_correct IS NOT NULL
+                  AND direction IN ('bullish','bearish')
                   AND created_at >= datetime('now', '-90 days')
                   AND ({sector_conditions})
             """).fetchone()

@@ -55,9 +55,10 @@ def get_sector_win_rates(conn: sqlite3.Connection,
     Returns dict of {sector: {'win_rate': float, 'total': int, 'correct': int}}
     """
     rows = conn.execute("""
-        SELECT query, was_correct
+        SELECT query, direction, was_correct
         FROM predictions
         WHERE was_correct IS NOT NULL
+          AND direction IN ('bullish','bearish')
         ORDER BY created_at DESC
         LIMIT 200
     """).fetchall()
@@ -65,7 +66,7 @@ def get_sector_win_rates(conn: sqlite3.Connection,
     from collections import defaultdict
     sector_data = defaultdict(list)
 
-    for query, correct in rows:
+    for query, direction, correct in rows:
         sector = get_sector_from_query(query)
         sector_data[sector].append(correct)
 
